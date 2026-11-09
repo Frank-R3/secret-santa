@@ -3,7 +3,8 @@ import {
   Sparkles, Gift, Users, Settings, Copy, Check, Lock, 
   Unlock, Trash2, Plus, ArrowLeft, KeyRound, LogOut,
   Calendar, DollarSign, ShieldAlert, AlertTriangle, ChevronRight,
-  RefreshCw, Snowflake, Trees, HeartHandshake, Ban, MailOpen, UserPlus
+  RefreshCw, Snowflake, Trees, HeartHandshake, Ban, MailOpen, UserPlus,
+  MessageSquare, Send
 } from 'lucide-react';
 
 import { initializeApp, getApps } from 'firebase/app';
@@ -259,6 +260,28 @@ function WaxSealEnvelope({ giver, pairResult, participants }) {
                   : "（無特別填寫地雷，自由發揮！）"}
               </div>
             </div>
+
+            {/* 同步顯示大家對這位收禮者的匿名嘴砲與推坑建議 */}
+            <div className="bg-[#153528]/10 rounded-2xl p-4 border border-[#153528]/25 space-y-2">
+              <div className="text-xs font-extrabold text-[#153528] flex items-center gap-1.5">
+                <MessageSquare className="w-4 h-4 text-[#7A5523]" />
+                <span>親友團對 TA 的匿名嘴砲＆送禮推坑 ({Array.isArray(receiver?.gossipComments) ? receiver.gossipComments.length : 0} 則)：</span>
+              </div>
+              {Array.isArray(receiver?.gossipComments) && receiver.gossipComments.length > 0 ? (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {receiver.gossipComments.map(c => (
+                    <div key={c.id} className="text-xs bg-white/70 rounded-xl px-3 py-2 border border-[#D4AF37]/40 text-[#2A1F11]">
+                      <span className="font-extrabold text-[#9E2A2B]">{c.alias}：</span>
+                      <span>{c.text}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-[#5A4521] italic">
+                  （目前還沒有人對 TA 匿名嘴砲，快去「3. 匿名嘴砲牆」幫大家補充線索！）
+                </div>
+              )}
+            </div>
           </div>
 
           <button
@@ -376,6 +399,11 @@ export default function SecretSantaApp() {
   const [isCurrentRoomLoaded, setIsCurrentRoomLoaded] = useState(false);
   const [roomNotFound, setRoomNotFound] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
+
+  // 匿名嘴砲牆（公開推坑留言）狀態
+  const [selectedGossipTargetId, setSelectedGossipTargetId] = useState('');
+  const [gossipInputText, setGossipInputText] = useState('');
+  const [gossipAlias, setGossipAlias] = useState('🦌 神秘吃瓜馴鹿');
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -543,7 +571,8 @@ export default function SecretSantaApp() {
         excludedId: '',
         isReady: false,
         wishlist: '',
-        blacklist: ''
+        blacklist: '',
+        gossipComments: []
       };
       const updatedList = [...participants, newMember];
       setParticipants(updatedList);
@@ -551,6 +580,13 @@ export default function SecretSantaApp() {
       showToast(`🎄 已自動將「${globalAccount.name}」加入「${roomInfo.name}」名冊！`, 'info');
     }
   }, [globalAccount, activeRoomCode, isCurrentRoomLoaded, roomNotFound, roomInfo.code, participants.length]);
+
+  // 當成員清單變化時，自動預設選中第一位成員作為嘴砲留言目標
+  useEffect(() => {
+    if (participants.length > 0 && (!selectedGossipTargetId || !participants.some(p => p.id === selectedGossipTargetId))) {
+      setSelectedGossipTargetId(participants[0].id);
+    }
+  }, [participants, selectedGossipTargetId]);
 
   // 同步房間資料至雲端與本機
   const syncRoomToCloud = async (updateFields) => {
@@ -675,7 +711,8 @@ export default function SecretSantaApp() {
         excludedId: '',
         isReady: false,
         wishlist: '',
-        blacklist: ''
+        blacklist: '',
+        gossipComments: []
       }],
       pairings: null,
       isLocked: false,
@@ -1192,14 +1229,15 @@ export default function SecretSantaApp() {
           </div>
 
           {/* =============================================================== */}
-          {/* 4 大操作步驟導覽分頁按鈕 (Tabs) */}
+          {/* 5 大操作步驟導覽分頁按鈕 (Tabs) */}
           {/* =============================================================== */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-[#0D231A]/90 p-2 rounded-2xl border border-[#D4AF37]/30 shadow-lg">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#0D231A]/90 p-2 rounded-2xl border border-[#D4AF37]/30 shadow-lg">
             {[
               { id: 'participants', label: '1. 聖誕名冊', icon: Users },
               { id: 'wishlist', label: '2. 許願聖誕襪', icon: Gift },
-              { id: 'settings', label: '3. 木屋與抽籤', icon: Settings },
-              { id: 'reveal', label: '4. 火漆信封開箱', icon: MailOpen }
+              { id: 'gossip', label: '3. 匿名嘴砲牆', icon: MessageSquare },
+              { id: 'settings', label: '4. 木屋與抽籤', icon: Settings },
+              { id: 'reveal', label: '5. 火漆信封開箱', icon: MailOpen }
             ].map(tab => {
               const IconComp = tab.icon;
               const isActive = activeTab === tab.id;
@@ -1232,15 +1270,23 @@ export default function SecretSantaApp() {
                     <span>小木屋成員名冊 ({participants.length} 人)</span>
                   </h2>
                   <p className="text-xs text-[#A3B8AE] mt-0.5">
-                    至少需 3 人即可抽籤；每個人可選填「不想抽到的避開對象（如伴侶）」。
+                    至少需 3 人即可抽籤；點選「💬 匿名嘴砲」可去爆料朋友適合什麼禮物！
                   </p>
                 </div>
-                <button
-                  onClick={() => setActiveTab('wishlist')}
-                  className="px-3.5 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#E5C158] text-[#071712] text-xs font-extrabold transition shrink-0"
-                >
-                  🧦 前往填寫我的心願襪 →
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setActiveTab('gossip')}
+                    className="px-3 py-2 rounded-xl bg-[#153528] hover:bg-[#1E4635] text-[#F3E5AB] border border-[#D4AF37]/40 text-xs font-extrabold transition"
+                  >
+                    💬 去匿名嘴砲牆
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('wishlist')}
+                    className="px-3.5 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#E5C158] text-[#071712] text-xs font-extrabold transition"
+                  >
+                    🧦 填寫我的心願襪 →
+                  </button>
+                </div>
               </div>
 
               {/* 成員卡片列表 */}
@@ -1248,6 +1294,7 @@ export default function SecretSantaApp() {
                 {participants.map(p => {
                   const isMe = globalAccount && p.name.toLowerCase() === globalAccount.name.toLowerCase();
                   const hasWish = Boolean(p.isReady || (p.wishlist && p.wishlist.trim()));
+                  const gossipCount = Array.isArray(p.gossipComments) ? p.gossipComments.length : 0;
                   return (
                     <div
                       key={p.id}
@@ -1283,11 +1330,28 @@ export default function SecretSantaApp() {
                               🎁 心願提示：{p.wishlist}
                             </div>
                           )}
+                          {gossipCount > 0 && (
+                            <div className="text-[11px] text-[#D4AF37] line-clamp-1">
+                              💬 最新匿名爆料：「{p.gossipComments[p.gossipComments.length - 1].text}」
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {/* 避開對象設定 & 創辦人移除按鈕 */}
-                      <div className="flex items-center gap-2 self-end sm:self-center">
+                      {/* 匿名嘴砲快速按鈕 & 避開對象設定 & 創辦人移除按鈕 */}
+                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedGossipTargetId(p.id);
+                            setActiveTab('gossip');
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-[#153528] hover:bg-[#1E4635] border border-[#D4AF37]/40 text-xs font-bold text-[#F3E5AB] flex items-center gap-1 transition"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5 text-[#D4AF37]" />
+                          <span>💬 匿名嘴砲 ({gossipCount})</span>
+                        </button>
+
                         {(isMe || isRoomCreator) && !pairings && (
                           <div className="flex items-center gap-1.5">
                             <HeartHandshake className="w-3.5 h-3.5 text-[#D4AF37]" />
@@ -1377,7 +1441,8 @@ export default function SecretSantaApp() {
                           excludedId: '',
                           isReady: false,
                           wishlist: '',
-                          blacklist: ''
+                          blacklist: '',
+                          gossipComments: []
                         };
                         const updated = [...participants, newM];
                         setParticipants(updated);
@@ -1518,7 +1583,216 @@ export default function SecretSantaApp() {
           )}
 
           {/* =============================================================== */}
-          {/* 分頁 3：木屋活動設定與啟動抽籤 */}
+          {/* 分頁 3：匿名嘴砲許願池（公開對每個人匿名推坑、爆料、打嘴砲） */}
+          {/* =============================================================== */}
+          {activeTab === 'gossip' && (
+            <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-5">
+              <div className="border-b border-[#D4AF37]/20 pb-3">
+                <h2 className="text-base font-extrabold text-[#FFFDF9] flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-[#D4AF37]" />
+                  <span>🎭 匿名嘴砲許願池（親友推坑＆爆料留言板）</span>
+                </h2>
+                <p className="text-xs text-[#A3B8AE] mt-1 leading-relaxed">
+                  大家可以在這裡<strong>完全匿名</strong>對任何一位成員進行公開留言！聊聊「他適合什麼風格、平常有什麼怪癖、建議送他什麼方向的東西」，讓抽到他的人更有靈感！（⚠️ <strong>注意：禁止直接指定特定商品全名，專供大家打嘴砲推坑！</strong>）
+                </p>
+              </div>
+
+              {/* 選擇要嘴砲 / 推坑的對象 */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-[#F3E5AB]">
+                  1. 點選你要匿名嘴砲 / 推坑的對象：
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {participants.map(p => {
+                    const count = Array.isArray(p.gossipComments) ? p.gossipComments.length : 0;
+                    const isSelected = selectedGossipTargetId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setSelectedGossipTargetId(p.id)}
+                        className={`px-3.5 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-2 border ${
+                          isSelected
+                            ? 'bg-[#D4AF37] text-[#071712] border-[#FFF8E7] shadow-lg scale-[1.03]'
+                            : 'bg-[#071712]/80 text-[#F3E5AB] border-[#D4AF37]/30 hover:bg-[#153528]'
+                        }`}
+                      >
+                        <span>{p.avatar || '🎅'}</span>
+                        <span>{p.name}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                          isSelected ? 'bg-[#071712] text-[#D4AF37]' : 'bg-[#153528] text-[#D4AF37]'
+                        }`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 發送匿名嘴砲表單 */}
+              {(() => {
+                const targetMember = participants.find(p => p.id === selectedGossipTargetId) || participants[0];
+                if (!targetMember) return null;
+                const targetComments = Array.isArray(targetMember.gossipComments) ? targetMember.gossipComments : [];
+
+                return (
+                  <div className="space-y-5 pt-1">
+                    <div className="p-4 rounded-2xl bg-[#071712]/90 border border-[#D4AF37]/40 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="text-xs font-bold text-[#F3E5AB] flex items-center gap-1.5">
+                          <span>正在對</span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-[#9E2A2B] text-white font-extrabold">
+                            {targetMember.avatar || '🎅'} {targetMember.name}
+                          </span>
+                          <span>進行公開匿名爆料（絕不顯示您的真名）：</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-[#A3B8AE]">匿名頭銜：</span>
+                          <select
+                            value={gossipAlias}
+                            onChange={e => setGossipAlias(e.target.value)}
+                            className="bg-[#0D231A] border border-[#D4AF37]/40 rounded-xl px-2.5 py-1 text-xs text-[#F3E5AB]"
+                          >
+                            {[
+                              '🦌 神秘吃瓜馴鹿',
+                              '⛄ 路過嘴砲雪人',
+                              '🎄 毒舌聖誕精靈',
+                              '🎅 隔壁棚聖誕老人',
+                              '🦊 知道太多的北極狐',
+                              '🍪 薑餅人觀察家'
+                            ].map(alias => (
+                              <option key={alias} value={alias}>{alias}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={gossipInputText}
+                          onChange={e => setGossipInputText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const cleanText = gossipInputText.trim();
+                              if (!cleanText) return;
+                              const newComment = {
+                                id: `c_${Date.now()}`,
+                                alias: gossipAlias,
+                                text: cleanText,
+                                createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              };
+                              const updated = participants.map(item =>
+                                item.id === targetMember.id
+                                  ? { ...item, gossipComments: [...(item.gossipComments || []), newComment] }
+                                  : item
+                              );
+                              setParticipants(updated);
+                              syncRoomToCloud({ participants: updated });
+                              setGossipInputText('');
+                              showToast(`🎭 已匿名發送對「${targetMember.name}」的嘴砲推坑留言！`, 'success');
+                            }
+                          }}
+                          placeholder={`匿名嘴砲「${targetMember.name}」適合什麼風格禮物...（請勿直接指定商品全名！）`}
+                          className="flex-1 bg-[#0D231A] border border-[#D4AF37]/30 rounded-xl px-4 py-2.5 text-xs text-[#FFF8E7] focus:outline-none focus:border-[#D4AF37]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cleanText = gossipInputText.trim();
+                            if (!cleanText) {
+                              showToast('請先輸入匿名嘴砲或推坑內容喔！', 'warning');
+                              return;
+                            }
+                            const newComment = {
+                              id: `c_${Date.now()}`,
+                              alias: gossipAlias,
+                              text: cleanText,
+                              createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            };
+                            const updated = participants.map(item =>
+                              item.id === targetMember.id
+                                ? { ...item, gossipComments: [...(item.gossipComments || []), newComment] }
+                                : item
+                            );
+                            setParticipants(updated);
+                            syncRoomToCloud({ participants: updated });
+                            setGossipInputText('');
+                            showToast(`🎭 已匿名發送對「${targetMember.name}」的嘴砲推坑留言！`, 'success');
+                          }}
+                          className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#9E2A2B] to-[#B83334] hover:brightness-110 text-[#FFF8E7] text-xs font-extrabold border border-[#D4AF37]/50 shadow flex items-center justify-center gap-1.5 shrink-0"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>匿名送出嘴砲</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 當前選中對象的留言牆 */}
+                    <div className="space-y-3">
+                      <div className="text-xs font-extrabold text-[#D4AF37] flex items-center justify-between">
+                        <span>📢 關於「{targetMember.name}」的公開匿名嘴砲＆送禮建議 ({targetComments.length} 則)</span>
+                      </div>
+
+                      {targetComments.length === 0 ? (
+                        <div className="text-center py-8 bg-[#071712]/50 rounded-2xl border border-[#D4AF37]/20 text-xs text-[#A3B8AE]">
+                          目前還沒有人對「{targetMember.name}」開砲，快當第一個匿名爆料推坑的人吧！
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {targetComments.map(comment => (
+                            <div
+                              key={comment.id}
+                              className="p-3.5 rounded-2xl bg-[#153528]/80 border border-[#D4AF37]/30 flex items-start justify-between gap-3"
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-extrabold text-[#D4AF37]">{comment.alias}</span>
+                                  <span className="text-[10px] text-[#A3B8AE]">→ 給 {targetMember.name} 的送禮建議</span>
+                                  {comment.createdAt && (
+                                    <span className="text-[10px] text-[#A3B8AE]/70 font-mono">{comment.createdAt}</span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-[#FFF8E7] leading-relaxed whitespace-pre-line">
+                                  {comment.text}
+                                </p>
+                              </div>
+
+                              {isRoomCreator && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = participants.map(item =>
+                                      item.id === targetMember.id
+                                        ? { ...item, gossipComments: (item.gossipComments || []).filter(c => c.id !== comment.id) }
+                                        : item
+                                    );
+                                    setParticipants(updated);
+                                    syncRoomToCloud({ participants: updated });
+                                    showToast('已刪除該則匿名留言', 'info');
+                                  }}
+                                  className="text-[#E05A47] hover:text-white p-1"
+                                  title="創辦人刪除此留言"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* =============================================================== */}
+          {/* 分頁 4：木屋活動設定與啟動抽籤 */}
           {/* =============================================================== */}
           {activeTab === 'settings' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-6">
