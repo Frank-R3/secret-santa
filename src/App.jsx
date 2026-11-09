@@ -25,31 +25,32 @@ import {
 } from 'firebase/firestore';
 
 // ==========================================
-// 0. 雲端資料庫與環境變數設定 (自動相容 Canvas 預覽與 Vercel .env)
+// 0. 雲端資料庫與環境變數設定 (支援 Vite 靜態替換與 Canvas 預覽)
 // ==========================================
-const getViteEnv = (key) => {
-  try {
-    const env = new Function('try { return import.meta.env; } catch (e) { return {}; }')();
-    return (env && env[key]) || "";
-  } catch {
-    return "";
+let viteEnv = {};
+try {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    viteEnv = import.meta.env;
   }
-};
+} catch {
+  // Fallback if import.meta is unavailable
+}
 
 const EXTERNAL_FIREBASE_CONFIG = {
-  apiKey: getViteEnv('VITE_FIREBASE_API_KEY'),
-  authDomain: getViteEnv('VITE_FIREBASE_AUTH_DOMAIN'),
-  projectId: getViteEnv('VITE_FIREBASE_PROJECT_ID'),
-  storageBucket: getViteEnv('VITE_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: getViteEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: getViteEnv('VITE_FIREBASE_APP_ID')
+  apiKey: viteEnv.VITE_FIREBASE_API_KEY || "",
+  authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN || "",
+  projectId: viteEnv.VITE_FIREBASE_PROJECT_ID || "",
+  storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: viteEnv.VITE_FIREBASE_APP_ID || ""
 };
 
-const EXTERNAL_GEMINI_API_KEY = getViteEnv('VITE_GEMINI_API_KEY');
+const EXTERNAL_GEMINI_API_KEY = viteEnv.VITE_GEMINI_API_KEY || "";
 
 let app = null;
 let auth = null;
 let db = null;
+let isCloudConfigured = false;
 
 try {
   const rawConfig =
@@ -61,9 +62,10 @@ try {
     app = initializeApp(rawConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    isCloudConfigured = true;
   }
 } catch (err) {
-  console.warn('Firebase initialization skipped or failed, running in local fallback mode:', err);
+  console.warn('Firebase initialization skipped or failed:', err);
 }
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'secret-santa-prod-v1';
@@ -284,33 +286,29 @@ export default function SecretSantaApp() {
   });
 
   // 全域會員名冊（儲存在雲端，避免撞名與核對密碼）
-  const [registeredAccounts, setRegisteredAccounts] = useState([
-    { name: '小傑', pin: '1234', avatar: '🎅' },
-    { name: '小美', pin: '1234', avatar: '🦌' },
-    { name: '阿凱', pin: '1234', avatar: '⛄' }
-  ]);
+  const [registeredAccounts, setRegisteredAccounts] = useState([]);
 
   // 當前所在的小木屋代碼（若為 null 代表在「網站首頁：小木屋總覽大廳」）
   const [activeRoomCode, setActiveRoomCode] = useState(invitedRoomFromUrl || null);
 
-  // 所有雲端小木屋總覽列表
-  const [cloudRoomList, setCloudRoomList] = useState([
-    {
-      code: 'SANTA-888',
-      name: DEFAULT_ROOM_INFO.name,
-      budget: DEFAULT_ROOM_INFO.budget,
-      eventDate: DEFAULT_ROOM_INFO.eventDate,
-      creatorName: DEFAULT_ROOM_INFO.creatorName,
-      participantCount: INITIAL_PARTICIPANTS.length,
-      hasDrawn: false
-    }
-  ]);
+  // 所有雲端小木屋總覽列表（預設為空陣列，等待雲端真實資料，不再塞入假示範房）
+  const [cloudRoomList, setCloudRoomList] = useState([]);
+  const [isLoadingRooms, setIsLoadingRooms] = useState(true);
 
-  // 當前進入的小木屋詳細資料
-  const [roomInfo, setRoomInfo] = useState(DEFAULT_ROOM_INFO);
-  const [participants, setParticipants] = useState(INITIAL_PARTICIPANTS);
-  const [suggestions, setSuggestions] = useState(INITIAL_SUGGESTIONS);
+  // 當前進入的小木屋詳細資料與載入狀態
+  const [roomInfo, setRoomInfo] = useState({
+    name: '載入小木屋中...',
+    code: invitedRoomFromUrl || '',
+    budget: '載入中...',
+    eventDate: '載入中...',
+    allowForceDraw: false,
+    creatorName: ''
+  });
+  const [participants, setParticipants] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [pairings, setPairings] = useState(null);
+  const [isCurrentRoomLoaded, setIsCurrentRoomLoaded] = useState(false);
+  const [roomNotFound, setRoomNotFound] = useState(false);
 
   // 管理員解鎖狀態
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
@@ -403,6 +401,10 @@ export default function SecretSantaApp() {
   // 雲端步驟 2: 監聽全域帳號名冊 與 所有小木屋總覽
   // ==========================================
   useEffect(() => {
+    if (!isCloudConfigured) {
+      setIsLoadingRooms(false);
+      return;
+    }
     if (!firebaseUser || !db) return;
 
     // 監聽全域帳號名冊
@@ -417,11 +419,11 @@ export default function SecretSantaApp() {
       (err) => console.error('Error listening users directory:', err)
     );
 
-    // 監聽所有小木屋總覽
+    // 監聽所有小木屋總覽（不再自動復活 SANTA-888 示範木屋！）
     const roomsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms');
     const unsubRoomsList = onSnapshot(
       roomsColRef,
-      async (snapshot) => {
+      (snapshot) => {
         const list = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
@@ -433,31 +435,21 @@ export default function SecretSantaApp() {
               eventDate: data.roomInfo.eventDate || '聖誕夜',
               creatorName: data.roomInfo.creatorName || data.participants?.find(p => p.isHost)?.name || '主辦人',
               participantCount: (data.participants || []).length,
-              hasDrawn: Boolean(data.pairings)
+              hasDrawn: Boolean(data.pairings),
+              updatedAt: data.updatedAt || 0
             });
           }
         });
 
-        // 若雲端完全沒半間房間，建立一間預設示範木屋
-        if (list.length === 0) {
-          const seedRoomRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', 'SANTA-888');
-          const seedData = {
-            roomInfo: DEFAULT_ROOM_INFO,
-            participants: INITIAL_PARTICIPANTS,
-            suggestions: INITIAL_SUGGESTIONS,
-            pairings: null,
-            updatedAt: Date.now()
-          };
-          try {
-            await setDoc(seedRoomRef, seedData);
-          } catch (e) {
-            console.error('Seed default room error:', e);
-          }
-        } else {
-          setCloudRoomList(list);
-        }
+        // 依建立/更新時間排序（最新的在最前面）
+        list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        setCloudRoomList(list);
+        setIsLoadingRooms(false);
       },
-      (err) => console.error('Error listening to room list:', err)
+      (err) => {
+        console.error('Error listening to room list:', err);
+        setIsLoadingRooms(false);
+      }
     );
 
     return () => {
@@ -470,30 +462,49 @@ export default function SecretSantaApp() {
   // 雲端步驟 3: 當進入特定小木屋時，監聽該木屋即時資料並自動將已登入者加入木屋
   // ==========================================
   useEffect(() => {
-    if (!activeRoomCode || !firebaseUser || !db) return;
+    if (!activeRoomCode) {
+      setIsCurrentRoomLoaded(false);
+      setRoomNotFound(false);
+      return;
+    }
+    if (!isCloudConfigured) {
+      setIsCurrentRoomLoaded(true);
+      return;
+    }
+    if (!firebaseUser || !db) return;
+
+    setIsCurrentRoomLoaded(false);
+    setRoomNotFound(false);
 
     const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', activeRoomCode);
     const unsubCurrentRoom = onSnapshot(
       roomDocRef,
-      async (docSnap) => {
+      (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.roomInfo) setRoomInfo(data.roomInfo);
-          const roomParticipants = data.participants || [];
-          setParticipants(roomParticipants);
+          setParticipants(data.participants || []);
           setSuggestions(data.suggestions || []);
           setPairings(data.pairings || null);
+          setRoomNotFound(false);
+          setIsCurrentRoomLoaded(true);
+        } else {
+          setRoomNotFound(true);
+          setIsCurrentRoomLoaded(true);
         }
       },
-      (err) => console.error('Error listening to current room:', err)
+      (err) => {
+        console.error('Error listening to current room:', err);
+        setIsCurrentRoomLoaded(true);
+      }
     );
 
     return () => unsubCurrentRoom();
   }, [firebaseUser, activeRoomCode]);
 
-  // 當「已登入的全域使用者」進入某間小木屋時，若他還不在名單內且尚未抽籤，自動將他加入該木屋！
+  // 當「已登入的全域使用者」進入某間小木屋時，必須等雲端真實資料載入完成 (isCurrentRoomLoaded) 且房間存在，才自動將他加入該木屋！
   useEffect(() => {
-    if (!globalAccount || !activeRoomCode) return;
+    if (!globalAccount || !activeRoomCode || !isCurrentRoomLoaded || roomNotFound) return;
 
     const alreadyInRoom = participants.some(
       p => p.name.toLowerCase() === globalAccount.name.toLowerCase()
@@ -515,7 +526,7 @@ export default function SecretSantaApp() {
       syncRoomToCloud({ participants: updatedList });
       showToast(`🎄 已自動將「${globalAccount.name}」加入小木屋名單！請填寫您的聖誕心願襪。`, 'info');
     }
-  }, [globalAccount, activeRoomCode, participants.length]);
+  }, [globalAccount, activeRoomCode, isCurrentRoomLoaded, roomNotFound, participants.length]);
 
   // 雲端寫入封裝
   const syncRoomToCloud = async (partialData, targetCode = activeRoomCode) => {
@@ -745,6 +756,8 @@ export default function SecretSantaApp() {
       setParticipants(newRoomData.participants);
       setSuggestions([]);
       setPairings(null);
+      setRoomNotFound(false);
+      setIsCurrentRoomLoaded(true);
       setActiveRoomCode(generatedCode);
       setShowCreateRoomModal(false);
       setShowInviteModal(true);
@@ -1216,68 +1229,118 @@ export default function SecretSantaApp() {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {cloudRoomList.map(room => {
-                const isMyCreatedRoom = isOwnerOfRoom(room.creatorName);
-                return (
-                  <div
-                    key={room.code}
-                    className="bg-[#0F291E]/90 hover:bg-[#133325] border border-[#D4AF37]/30 rounded-3xl p-5 shadow-lg transition flex flex-col justify-between gap-4"
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="text-base font-extrabold text-[#FFF8E7] leading-snug">
-                          {room.name}
-                        </h3>
-                        <span className="px-2 py-0.5 rounded-lg bg-[#071712] border border-[#D4AF37]/30 text-[11px] font-mono text-[#F3E5AB] shrink-0">
-                          {room.code}
-                        </span>
+            {isLoadingRooms ? (
+              <div className="bg-[#0F291E]/60 border border-[#D4AF37]/20 rounded-3xl p-10 text-center space-y-2">
+                <Sparkles className="w-7 h-7 text-[#D4AF37] animate-spin mx-auto" />
+                <p className="text-sm font-bold text-[#F3E5AB]">正在同步雲端小木屋列表...</p>
+              </div>
+            ) : cloudRoomList.length === 0 ? (
+              <div className="bg-[#0F291E]/60 border border-dashed border-[#D4AF37]/30 rounded-3xl p-10 text-center space-y-4">
+                <Trees className="w-10 h-10 text-[#D4AF37]/70 mx-auto" />
+                <div className="space-y-1">
+                  <h3 className="text-base font-extrabold text-[#FFF8E7]">目前還沒有任何聖誕小木屋</h3>
+                  <p className="text-xs text-[#A3B8AE]">
+                    點擊下方按鈕建立您的第一個專屬交換禮物小木屋，並複製連結邀請朋友吧！
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowCreateRoomModal(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#9E2A2B] to-[#B83334] text-[#FFF8E7] text-xs font-bold shadow-lg border border-[#D4AF37]/40"
+                >
+                  <Plus className="w-4 h-4 text-[#F3E5AB]" />
+                  <span>立即建立第一個小木屋</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {cloudRoomList.map(room => {
+                  const isMyCreatedRoom = isOwnerOfRoom(room.creatorName);
+                  return (
+                    <div
+                      key={room.code}
+                      className="bg-[#0F291E]/90 hover:bg-[#133325] border border-[#D4AF37]/30 rounded-3xl p-5 shadow-lg transition flex flex-col justify-between gap-4"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="text-base font-extrabold text-[#FFF8E7] leading-snug">
+                            {room.name}
+                          </h3>
+                          <span className="px-2 py-0.5 rounded-lg bg-[#071712] border border-[#D4AF37]/30 text-[11px] font-mono text-[#F3E5AB] shrink-0">
+                            {room.code}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-[#C6D6CE]">
+                          <span className="inline-flex items-center gap-1 bg-[#071712]/70 px-2.5 py-1 rounded-lg">
+                            👑 創辦人：<strong className="text-[#FFF8E7]">{room.creatorName}</strong>
+                            {isMyCreatedRoom && (
+                              <span className="ml-1 px-1.5 py-0.2 bg-[#D4AF37] text-[#071712] rounded text-[10px] font-bold">
+                                我創辦的
+                              </span>
+                            )}
+                          </span>
+                          <span className="inline-flex items-center gap-1 bg-[#071712]/70 px-2.5 py-1 rounded-lg">
+                            <Users className="w-3.5 h-3.5 text-[#6EE7B7]" />
+                            <strong>{room.participantCount} 人</strong>
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-[#C6D6CE]">
-                        <span className="inline-flex items-center gap-1 bg-[#071712]/70 px-2.5 py-1 rounded-lg">
-                          👑 創辦人：<strong className="text-[#FFF8E7]">{room.creatorName}</strong>
-                          {isMyCreatedRoom && (
-                            <span className="ml-1 px-1.5 py-0.2 bg-[#D4AF37] text-[#071712] rounded text-[10px] font-bold">
-                              我創辦的
-                            </span>
-                          )}
-                        </span>
-                        <span className="inline-flex items-center gap-1 bg-[#071712]/70 px-2.5 py-1 rounded-lg">
-                          <Users className="w-3.5 h-3.5 text-[#6EE7B7]" />
-                          <strong>{room.participantCount} 人</strong>
-                        </span>
+                      <div className="flex items-center justify-between pt-3 border-t border-[#D4AF37]/15 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRoomCodeToDelete(room.code)}
+                          className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[#3B0D11]/60 hover:bg-[#3B0D11] text-[#FCA5A5] border border-[#E05A47]/30 text-xs font-semibold transition"
+                          title="僅創辦人或管理員可刪除"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>刪除</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveRoomCode(room.code);
+                            setIsBoxOpened(false);
+                          }}
+                          className="flex-1 py-2 px-4 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#E6C65B] hover:brightness-105 text-[#071712] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow transition"
+                        >
+                          <DoorOpen className="w-4 h-4" />
+                          <span>進入此小木屋</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-[#D4AF37]/15 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setRoomCodeToDelete(room.code)}
-                        className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-[#3B0D11]/60 hover:bg-[#3B0D11] text-[#FCA5A5] border border-[#E05A47]/30 text-xs font-semibold transition"
-                        title="僅創辦人或管理員可刪除"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>刪除</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveRoomCode(room.code);
-                          setIsBoxOpened(false);
-                        }}
-                        className="flex-1 py-2 px-4 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#E6C65B] hover:brightness-105 text-[#071712] text-xs font-extrabold flex items-center justify-center gap-1.5 shadow transition"
-                      >
-                        <DoorOpen className="w-4 h-4" />
-                        <span>進入此小木屋</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
+        </div>
+      ) : !isCurrentRoomLoaded ? (
+        <div className="relative z-10 max-w-md mx-auto px-4 pt-24 text-center space-y-3">
+          <Sparkles className="w-8 h-8 text-[#D4AF37] animate-spin mx-auto" />
+          <div className="text-base font-extrabold text-[#FFF8E7]">
+            正在進入小木屋 ({activeRoomCode})...
+          </div>
+          <p className="text-xs text-[#A3B8AE]">正在從雲端同步最新名單與心願襪</p>
+        </div>
+      ) : roomNotFound ? (
+        <div className="relative z-10 max-w-md mx-auto px-4 pt-20">
+          <div className="bg-[#0F291E] border border-[#E05A47]/50 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+            <AlertTriangle className="w-10 h-10 text-[#E05A47] mx-auto" />
+            <h2 className="text-lg font-extrabold text-[#FFF8E7]">
+              找不到小木屋「{activeRoomCode}」
+            </h2>
+            <p className="text-xs text-[#C6D6CE] leading-relaxed">
+              這間小木屋可能已經被創辦人刪除，或是代碼輸入錯誤。請返回總覽首頁查看目前開放中的小木屋！
+            </p>
+            <button
+              onClick={() => setActiveRoomCode(null)}
+              className="w-full py-3 rounded-xl bg-[#D4AF37] text-[#071712] text-xs font-extrabold shadow-lg"
+            >
+              返回小木屋總覽首頁
+            </button>
+          </div>
         </div>
       ) : (
         /* ========================================== */
