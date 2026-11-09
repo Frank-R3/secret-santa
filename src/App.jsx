@@ -25,27 +25,37 @@ import {
 } from 'firebase/firestore';
 
 // ==========================================
-// 0. 雲端資料庫與環境變數設定 (支援 Vite 靜態替換與 Canvas 預覽)
+// 0. 雲端資料庫與環境變數設定 (避開 es2015 import.meta 編譯警告，同時支援 Vercel 與 Canvas)
 // ==========================================
-let viteEnv = {};
-try {
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    viteEnv = import.meta.env;
+const getSafeEnv = (key) => {
+  try {
+    // 1. 支援 Node / Webpack / 部分打包器注入的 process.env
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      return process.env[key];
+    }
+    // 2. 動態讀取 import.meta.env，避免 es2015 目標環境靜態語法報錯
+    const metaEnv = new Function('try { return import.meta.env; } catch (e) { return {}; }')();
+    if (metaEnv && metaEnv[key]) {
+      return metaEnv[key];
+    }
+  } catch {
+    // ignore
   }
-} catch {
-  // Fallback if import.meta is unavailable
-}
-
-const EXTERNAL_FIREBASE_CONFIG = {
-  apiKey: viteEnv.VITE_FIREBASE_API_KEY || "",
-  authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: viteEnv.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: viteEnv.VITE_FIREBASE_APP_ID || ""
+  return "";
 };
 
-const EXTERNAL_GEMINI_API_KEY = viteEnv.VITE_GEMINI_API_KEY || "";
+// 💡 小提醒：因為 Firebase Web 設定屬於公開識別碼，若您在 Vercel 上遇到環境變數讀不到的問題，
+// 也可以直接把您 `.env` 裡的 6 個字串直接貼在下方預設雙引號 "" 內，就永遠不怕讀不到！
+const EXTERNAL_FIREBASE_CONFIG = {
+  apiKey: getSafeEnv('VITE_FIREBASE_API_KEY') || "",
+  authDomain: getSafeEnv('VITE_FIREBASE_AUTH_DOMAIN') || "",
+  projectId: getSafeEnv('VITE_FIREBASE_PROJECT_ID') || "",
+  storageBucket: getSafeEnv('VITE_FIREBASE_STORAGE_BUCKET') || "",
+  messagingSenderId: getSafeEnv('VITE_FIREBASE_MESSAGING_SENDER_ID') || "958528922808",
+  appId: getSafeEnv('VITE_FIREBASE_APP_ID') || "1:958528922808:web:eab377a5ae451d14aac04d"
+};
+
+const EXTERNAL_GEMINI_API_KEY = getSafeEnv('VITE_GEMINI_API_KEY') || "";
 
 let app = null;
 let auth = null;
@@ -309,6 +319,7 @@ export default function SecretSantaApp() {
   const [pairings, setPairings] = useState(null);
   const [isCurrentRoomLoaded, setIsCurrentRoomLoaded] = useState(false);
   const [roomNotFound, setRoomNotFound] = useState(false);
+  const [cloudErrorMsg, setCloudErrorMsg] = useState(null);
 
   // 管理員解鎖狀態
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
@@ -401,13 +412,17 @@ export default function SecretSantaApp() {
   // 雲端步驟 2: 監聽全域帳號名冊 與 所有小木屋總覽
   // ==========================================
   useEffect(() => {
-    if (!isCloudConfigured) {
+    if (!isCloudConfigured || !db) {
       setIsLoadingRooms(false);
       return;
     }
-    if (!firebaseUser || !db) return;
 
-    // 監聽全域帳號名冊
+    // 4秒防卡死保護：避免手機 LINE 瀏覽器網路延遲導致無限轉圈
+    const timeoutId = setTimeout(() => {
+      setIsLoadingRooms(false);
+    }, 4000);
+
+    // 監聽全域帳號名冊（不強制等待 firebaseUser，避免 LINE 內建瀏覽器擋 Auth 卡死）
     const usersDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_users', 'directory');
     const unsubUsers = onSnapshot(
       usersDocRef,
@@ -419,11 +434,13 @@ export default function SecretSantaApp() {
       (err) => console.error('Error listening users directory:', err)
     );
 
-    // 監聽所有小木屋總覽（不再自動復活 SANTA-888 示範木屋！）
+    // 監聽所有小木屋總覽
     const roomsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms');
     const unsubRoomsList = onSnapshot(
       roomsColRef,
       (snapshot) => {
+        clearTimeout(timeoutId);
+        setCloudErrorMsg(null);
         const list = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
@@ -441,18 +458,20 @@ export default function SecretSantaApp() {
           }
         });
 
-        // 依建立/更新時間排序（最新的在最前面）
         list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
         setCloudRoomList(list);
         setIsLoadingRooms(false);
       },
       (err) => {
+        clearTimeout(timeoutId);
         console.error('Error listening to room list:', err);
+        setCloudErrorMsg(err.message || '讀取雲端資料庫失敗');
         setIsLoadingRooms(false);
       }
     );
 
     return () => {
+      clearTimeout(timeoutId);
       unsubUsers();
       unsubRoomsList();
     };
@@ -467,19 +486,24 @@ export default function SecretSantaApp() {
       setRoomNotFound(false);
       return;
     }
-    if (!isCloudConfigured) {
+    if (!isCloudConfigured || !db) {
       setIsCurrentRoomLoaded(true);
       return;
     }
-    if (!firebaseUser || !db) return;
 
     setIsCurrentRoomLoaded(false);
     setRoomNotFound(false);
+
+    // 4秒防卡死保護：若超時未回應則解除轉圈圈並顯示狀態
+    const loadTimeout = setTimeout(() => {
+      setIsCurrentRoomLoaded(true);
+    }, 4500);
 
     const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', activeRoomCode);
     const unsubCurrentRoom = onSnapshot(
       roomDocRef,
       (docSnap) => {
+        clearTimeout(loadTimeout);
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.roomInfo) setRoomInfo(data.roomInfo);
@@ -494,12 +518,18 @@ export default function SecretSantaApp() {
         }
       },
       (err) => {
+        clearTimeout(loadTimeout);
         console.error('Error listening to current room:', err);
+        setCloudErrorMsg(err.message || '無法讀取小木屋資料');
+        setRoomNotFound(true);
         setIsCurrentRoomLoaded(true);
       }
     );
 
-    return () => unsubCurrentRoom();
+    return () => {
+      clearTimeout(loadTimeout);
+      unsubCurrentRoom();
+    };
   }, [firebaseUser, activeRoomCode]);
 
   // 當「已登入的全域使用者」進入某間小木屋時，必須等雲端真實資料載入完成 (isCurrentRoomLoaded) 且房間存在，才自動將他加入該木屋！
@@ -543,7 +573,7 @@ export default function SecretSantaApp() {
       if (partialData.pairings !== undefined) setPairings(nextPairings);
     }
 
-    if (!firebaseUser || !db) return;
+    if (!db) return;
 
     try {
       const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', targetCode);
@@ -668,7 +698,7 @@ export default function SecretSantaApp() {
       localStorage.setItem('santa_global_account_v2', JSON.stringify(newUserObj));
       setAuthPin('');
 
-      if (firebaseUser && db) {
+      if (db) {
         try {
           const usersDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_users', 'directory');
           await setDoc(usersDocRef, { accounts: nextAccounts, updatedAt: Date.now() }, { merge: true });
@@ -734,7 +764,7 @@ export default function SecretSantaApp() {
     };
 
     try {
-      if (firebaseUser && db) {
+      if (db) {
         const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', generatedCode);
         await setDoc(roomDocRef, newRoomData);
       } else {
@@ -791,7 +821,7 @@ export default function SecretSantaApp() {
     }
 
     try {
-      if (firebaseUser && db) {
+      if (db) {
         const roomDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_rooms', roomCodeToDelete);
         await deleteDoc(roomDocRef);
       }
@@ -1317,12 +1347,20 @@ export default function SecretSantaApp() {
           </section>
         </div>
       ) : !isCurrentRoomLoaded ? (
-        <div className="relative z-10 max-w-md mx-auto px-4 pt-24 text-center space-y-3">
+        <div className="relative z-10 max-w-md mx-auto px-4 pt-24 text-center space-y-4">
           <Sparkles className="w-8 h-8 text-[#D4AF37] animate-spin mx-auto" />
           <div className="text-base font-extrabold text-[#FFF8E7]">
             正在進入小木屋 ({activeRoomCode})...
           </div>
           <p className="text-xs text-[#A3B8AE]">正在從雲端同步最新名單與心願襪</p>
+          <div className="pt-4">
+            <button
+              onClick={() => setActiveRoomCode(null)}
+              className="px-4 py-2 rounded-xl bg-[#153528] hover:bg-[#1E4635] text-[#F3E5AB] text-xs font-bold border border-[#D4AF37]/30"
+            >
+              ← 先返回小木屋總覽首頁
+            </button>
+          </div>
         </div>
       ) : roomNotFound ? (
         <div className="relative z-10 max-w-md mx-auto px-4 pt-20">
@@ -1332,8 +1370,13 @@ export default function SecretSantaApp() {
               找不到小木屋「{activeRoomCode}」
             </h2>
             <p className="text-xs text-[#C6D6CE] leading-relaxed">
-              這間小木屋可能已經被創辦人刪除，或是代碼輸入錯誤。請返回總覽首頁查看目前開放中的小木屋！
+              這間小木屋可能尚未同步到雲端、已被刪除，或您的 Firebase Firestore 尚未開啟「測試模式 (Test Mode)」讀取權限。
             </p>
+            {cloudErrorMsg && (
+              <div className="p-2.5 rounded-xl bg-black/40 text-[11px] text-[#FCA5A5] font-mono break-all">
+                系統提示：{cloudErrorMsg}
+              </div>
+            )}
             <button
               onClick={() => setActiveRoomCode(null)}
               className="w-full py-3 rounded-xl bg-[#D4AF37] text-[#071712] text-xs font-extrabold shadow-lg"
