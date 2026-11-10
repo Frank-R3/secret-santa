@@ -16,6 +16,7 @@ import {
 import { 
   getFirestore,
   doc,
+  getDoc,
   setDoc,
   deleteDoc,
   onSnapshot,
@@ -23,24 +24,8 @@ import {
 } from 'firebase/firestore';
 
 // ==========================================
-// 0. 雲端資料庫與環境變數設定 (相容 .env 與 Canvas 預覽)
+// 0. 雲端資料庫與環境變數設定 (.env 讀取)
 // ==========================================
-const getViteEnv = (key) => {
-  try {
-    if (typeof process !== 'undefined' && process.env && process.env[key]) {
-      return process.env[key];
-    }
-  } catch {
-    // ignore
-  }
-  return "";
-};
-
-/**
- * 💡 給部署到 Vercel / 本機 VS Code 的您：
- * 當您複製到 VS Code 的 src/App.jsx 時，若您使用 .env 檔案，
- * 可以將下方 getViteEnv('VITE_...') 直接改寫為 import.meta.env.VITE_...
- */
 const EXTERNAL_FIREBASE_CONFIG = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -139,7 +124,7 @@ async function callGeminiBlurWish(rawWish, apiKeyToUse) {
   const key = apiKeyToUse || "";
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -193,7 +178,6 @@ function WaxSealEnvelope({ giver, pairResult, participants, onOpenSeal }) {
           onClick={handleOpen}
           className="group relative cursor-pointer rounded-3xl bg-gradient-to-br from-[#F4EEDC] via-[#EAE0C8] to-[#DFD1B0] text-[#153528] p-8 border-2 border-[#D4AF37] shadow-2xl transition-all duration-500 hover:scale-[1.02] hover:shadow-[#D4AF37]/20"
         >
-          {/* 信封折線裝飾 */}
           <div className="absolute inset-x-0 top-0 h-24 border-b-2 border-[#D4AF37]/40 bg-[#E6D9BC]/60 rounded-t-3xl flex items-center justify-center">
             <span className="text-[11px] font-extrabold tracking-widest uppercase text-[#7A5523]">
               🎄 NORDIC SECRET SANTA OFFICIAL SEAL 🎄
@@ -201,7 +185,6 @@ function WaxSealEnvelope({ giver, pairResult, participants, onOpenSeal }) {
           </div>
 
           <div className="pt-16 pb-4 flex flex-col items-center text-center space-y-5">
-            {/* 火漆印章 */}
             <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-[#B83334] via-[#9E2A2B] to-[#6E1718] border-4 border-[#D4AF37] shadow-2xl flex flex-col items-center justify-center group-hover:scale-110 transition-transform duration-300">
               <div className="w-18 h-18 rounded-full border border-[#F3E5AB]/40 flex flex-col items-center justify-center p-3">
                 <span className="text-3xl">🎅</span>
@@ -275,7 +258,6 @@ function WaxSealEnvelope({ giver, pairResult, participants, onOpenSeal }) {
               </div>
             </div>
 
-            {/* 同步顯示大家對這位收禮者的匿名嘴砲與推坑建議 */}
             <div className="bg-[#153528]/10 rounded-2xl p-4 border border-[#153528]/25 space-y-2">
               <div className="text-xs font-extrabold text-[#153528] flex items-center gap-1.5">
                 <MessageSquare className="w-4 h-4 text-[#7A5523]" />
@@ -314,7 +296,6 @@ function WaxSealEnvelope({ giver, pairResult, participants, onOpenSeal }) {
 // 4. 主應用程式組件
 // ==========================================
 export default function SecretSantaApp() {
-  // 解析邀請網址參數 ?room=NOEL-XXX
   const invitedRoomFromUrl = useMemo(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -323,67 +304,52 @@ export default function SecretSantaApp() {
         const cleanCode = roomParam.trim().toUpperCase();
         try {
           sessionStorage.setItem('santa_invited_room', cleanCode);
-        } catch {
-          // ignore
-        }
+        } catch {}
         return cleanCode;
       }
       try {
         const savedInvite = sessionStorage.getItem('santa_invited_room');
         if (savedInvite) return savedInvite;
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     return null;
   }, []);
 
   const [pendingInviteRoom, setPendingInviteRoom] = useState(invitedRoomFromUrl || null);
 
-  // 全域登入者狀態：{ name: '小傑', pin: '1234', avatar: '🎅' }
   const [globalAccount, setGlobalAccount] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('santa_global_account_v2');
         if (saved) return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     return null;
   });
 
-  // 全站註冊帳號池（同步於雲端或本機）
   const [registeredAccounts, setRegisteredAccounts] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('santa_registered_accounts_v2');
         if (saved) return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     return [];
   });
 
-  // 目前進入的小木屋代碼（若為 null 則代表在「聖誕村小木屋總覽大廳」）
   const [activeRoomCode, setActiveRoomCode] = useState(invitedRoomFromUrl || null);
 
-  // 小木屋總覽列表（含本機快取備援，確保沒連上 Firebase 時也能完整體驗）
   const [cloudRoomList, setCloudRoomList] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('santa_rooms_index_v2');
         if (saved) return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
     return [];
   });
 
-  // 小木屋內部核心狀態
-  const [activeTab, setActiveTab] = useState('participants'); // 'participants' | 'settings' | 'wishlist' | 'reveal'
+  const [activeTab, setActiveTab] = useState('participants');
   const [roomInfo, setRoomInfo] = useState({
     code: '',
     name: '我的聖誕小木屋',
@@ -396,11 +362,10 @@ export default function SecretSantaApp() {
   const [isLocked, setIsLocked] = useState(false);
   const [adminPin, setAdminPin] = useState('8888');
 
-  // 表單與互動狀態
   const [authName, setAuthName] = useState('');
   const [authPin, setAuthPin] = useState('');
   const [authAvatar, setAuthAvatar] = useState('🎅');
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState('login');
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [newRoomNameInput, setNewRoomNameInput] = useState('');
   const [newRoomBudgetInput, setNewRoomBudgetInput] = useState('NT$ 500 ~ 1,000');
@@ -414,12 +379,9 @@ export default function SecretSantaApp() {
   const [roomNotFound, setRoomNotFound] = useState(false);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  // 匿名嘴砲牆（公開推坑留言）狀態
   const [selectedGossipTargetId, setSelectedGossipTargetId] = useState('');
   const [gossipInputText, setGossipInputText] = useState('');
   const [gossipAlias, setGossipAlias] = useState('🦌 神秘吃瓜馴鹿');
-
-  // 聖誕名冊：點擊單人卡片展開看完整心願清單與地雷
   const [expandedMemberId, setExpandedMemberId] = useState(null);
 
   const showToast = (message, type = 'success') => {
@@ -427,7 +389,6 @@ export default function SecretSantaApp() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Helper: 儲存單一房間到本機快取（讓單機預覽與雲端雙重穩定）
   const saveLocalRoomBackup = (code, data) => {
     if (typeof window === 'undefined' || !code) return;
     try {
@@ -447,9 +408,7 @@ export default function SecretSantaApp() {
         localStorage.setItem('santa_rooms_index_v2', JSON.stringify(next));
         return next;
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   // 1. Firebase 匿名驗證初始化
@@ -458,6 +417,27 @@ export default function SecretSantaApp() {
     const unsubAuth = onAuthStateChanged(auth, () => {});
     signInAnonymously(auth).catch(err => console.warn("Anonymous auth warning:", err));
     return () => unsubAuth();
+  }, []);
+
+  // 1.5 監聽雲端全站帳號列表（跨裝置防重複註冊與密碼比對）
+  useEffect(() => {
+    if (!db) return;
+    const accountsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'secret_santa_accounts');
+    const unsubAccounts = onSnapshot(accountsColRef, (snapshot) => {
+      const list = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data());
+      });
+      if (list.length > 0) {
+        setRegisteredAccounts(list);
+        try {
+          localStorage.setItem('santa_registered_accounts_v2', JSON.stringify(list));
+        } catch {}
+      }
+    }, (err) => {
+      console.warn("Accounts snapshot warning:", err);
+    });
+    return () => unsubAccounts();
   }, []);
 
   // 2. 監聽雲端所有小木屋列表
@@ -481,9 +461,7 @@ export default function SecretSantaApp() {
       setCloudRoomList(list);
       try {
         localStorage.setItem('santa_rooms_index_v2', JSON.stringify(list));
-      } catch {
-        // ignore
-      }
+      } catch {}
     }, (err) => {
       console.warn("Rooms snapshot warning:", err);
     });
@@ -500,7 +478,6 @@ export default function SecretSantaApp() {
     setIsCurrentRoomLoaded(false);
     setRoomNotFound(false);
 
-    // 若未設定 Firebase，從本機快取載入
     if (!db) {
       try {
         const raw = localStorage.getItem(`santa_room_data_${activeRoomCode}`);
@@ -599,14 +576,12 @@ export default function SecretSantaApp() {
     }
   }, [globalAccount, activeRoomCode, isCurrentRoomLoaded, roomNotFound, roomInfo.code, participants.length]);
 
-  // 當成員清單變化時，自動預設選中第一位成員作為嘴砲留言目標
   useEffect(() => {
     if (participants.length > 0 && (!selectedGossipTargetId || !participants.some(p => p.id === selectedGossipTargetId))) {
       setSelectedGossipTargetId(participants[0].id);
     }
   }, [participants, selectedGossipTargetId]);
 
-  // 同步房間資料至雲端與本機
   const syncRoomToCloud = async (updateFields) => {
     if (!activeRoomCode) return;
     const payload = {
@@ -634,14 +609,11 @@ export default function SecretSantaApp() {
     }
   };
 
-  // 全域註冊與登入處理
   const completeAuthAndRedirect = (userObj, isNewAccount = false) => {
     setGlobalAccount(userObj);
     try {
       localStorage.setItem('santa_global_account_v2', JSON.stringify(userObj));
-    } catch {
-      // ignore
-    }
+    } catch {}
     setAuthPin('');
 
     const targetRoom = activeRoomCode || pendingInviteRoom;
@@ -650,9 +622,7 @@ export default function SecretSantaApp() {
       setPendingInviteRoom(null);
       try {
         sessionStorage.removeItem('santa_invited_room');
-      } catch {
-        // ignore
-      }
+      } catch {}
       showToast(`🎄 歡迎「${userObj.name}」！已直接帶您進入受邀的小木屋 (${targetRoom})！`, 'success');
     } else {
       showToast(
@@ -664,7 +634,7 @@ export default function SecretSantaApp() {
     }
   };
 
-  const handleGlobalAuthSubmit = (e) => {
+  const handleGlobalAuthSubmit = async (e) => {
     e.preventDefault();
     const cleanName = authName.trim();
     const cleanPin = authPin.trim();
@@ -674,42 +644,74 @@ export default function SecretSantaApp() {
       return;
     }
 
-    const matchedAccount = registeredAccounts.find(
+    let matchedAccount = registeredAccounts.find(
       a => a.name.toLowerCase() === cleanName.toLowerCase()
     );
 
+    // 若本機快取尚未讀取到，直接向雲端做最後雙重確認
+    if (db && !matchedAccount) {
+      try {
+        const accountDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_accounts', cleanName.toLowerCase());
+        const docSnap = await getDoc(accountDocRef);
+        if (docSnap.exists()) {
+          matchedAccount = docSnap.data();
+        }
+      } catch (err) {
+        console.warn("Verify cloud account error:", err);
+      }
+    }
+
     if (authMode === 'login') {
-      if (matchedAccount && matchedAccount.pin && matchedAccount.pin !== cleanPin) {
-        showToast('密碼不正確！請重新確認或切換至建立新帳號。', 'error');
+      if (!matchedAccount) {
+        showToast(`找不到帳號「${cleanName}」！請切換至「首次進入・登記我是誰」先建立帳號。`, 'error');
         return;
       }
+
+      if (matchedAccount.pin !== cleanPin) {
+        showToast('密碼錯誤！請重新輸入正確密碼。', 'error');
+        return;
+      }
+
       const userObj = {
-        name: cleanName,
-        pin: cleanPin,
-        avatar: matchedAccount?.avatar || authAvatar
+        name: matchedAccount.name,
+        pin: matchedAccount.pin,
+        avatar: matchedAccount.avatar || authAvatar
       };
       completeAuthAndRedirect(userObj, false);
     } else {
+      if (matchedAccount) {
+        showToast(`⚠️ 帳號名稱「${cleanName}」已被其他人使用！請換一個暱稱，或切換至「已有帳號・直接登入」。`, 'error');
+        return;
+      }
+
       const newUserObj = {
         name: cleanName,
         pin: cleanPin,
-        avatar: authAvatar
+        avatar: authAvatar,
+        createdAt: Date.now()
       };
-      const nextAccounts = [
-        ...registeredAccounts.filter(a => a.name.toLowerCase() !== cleanName.toLowerCase()),
-        newUserObj
-      ];
+
+      const nextAccounts = [...registeredAccounts, newUserObj];
       setRegisteredAccounts(nextAccounts);
+
       try {
         localStorage.setItem('santa_registered_accounts_v2', JSON.stringify(nextAccounts));
-      } catch {
-        // ignore
+      } catch {}
+
+      if (db) {
+        try {
+          const accountDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'secret_santa_accounts', cleanName.toLowerCase());
+          await setDoc(accountDocRef, newUserObj);
+        } catch (err) {
+          console.warn("Cloud account save error:", err);
+        }
       }
+
       completeAuthAndRedirect(newUserObj, true);
     }
   };
 
-  // 建立新小木屋
+  // 補回缺失：建立新小木屋
   const handleCreateNewRoom = async () => {
     const rName = newRoomNameInput.trim() || `${globalAccount.name} 的聖誕交換禮物`;
     const rBudget = newRoomBudgetInput.trim() || 'NT$ 500 ~ 1,000';
@@ -756,16 +758,14 @@ export default function SecretSantaApp() {
     showToast(`🎉 成功創建小木屋「${rName}」！代碼：${newCode}`, 'success');
   };
 
-  // 刪除小木屋
+  // 補回缺失：刪除小木屋
   const handleDeleteRoomAction = async (targetCode) => {
     try {
       localStorage.removeItem(`santa_room_data_${targetCode}`);
       const nextList = cloudRoomList.filter(r => r.code !== targetCode);
       setCloudRoomList(nextList);
       localStorage.setItem('santa_rooms_index_v2', JSON.stringify(nextList));
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     if (db) {
       try {
@@ -784,7 +784,6 @@ export default function SecretSantaApp() {
     showToast(`🗑️ 小木屋 ${targetCode} 已成功刪除！`, 'info');
   };
 
-  // 計算當前使用者在房間內的角色與資料
   const myParticipant = useMemo(() => {
     if (!globalAccount) return null;
     return participants.find(p => p.name.toLowerCase() === globalAccount.name.toLowerCase()) || null;
@@ -829,9 +828,7 @@ export default function SecretSantaApp() {
         </div>
       )}
 
-      {/* ================================================================= */}
-      {/* 畫面一：尚未登入 ➔ 全站登入 / 建立帳號首頁 */}
-      {/* ================================================================= */}
+      {/* 畫面一：全站登入 / 建立帳號首頁 */}
       {!globalAccount ? (
         <div className="relative z-10 max-w-md mx-auto px-4 pt-12 pb-12">
           <div className="text-center mb-6 space-y-2">
@@ -847,7 +844,6 @@ export default function SecretSantaApp() {
             </p>
           </div>
 
-          {/* 若是點朋友的邀請連結進來，顯示直達提示 */}
           {(activeRoomCode || pendingInviteRoom) && (
             <div className="mb-5 p-4 rounded-2xl bg-gradient-to-r from-[#9E2A2B] to-[#7A1F20] border border-[#D4AF37] text-[#FFF8E7] shadow-xl flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-[#071712]/40 flex items-center justify-center text-xl shrink-0">
@@ -950,13 +946,9 @@ export default function SecretSantaApp() {
             </form>
           </div>
         </div>
-
-      /* ================================================================= */
-      /* 畫面二：已登入且在「聖誕村首頁大廳 (所有小木屋總覽)」 */
-      /* ================================================================= */
       ) : !activeRoomCode ? (
+        /* 畫面二：聖誕村首頁大廳 (所有小木屋總覽) */
         <div className="relative z-10 max-w-4xl mx-auto px-4 py-8 space-y-6">
-          {/* 頂部個人資訊列 */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#0D231A]/95 border border-[#D4AF37]/30 rounded-3xl p-5 shadow-xl">
             <div className="flex items-center gap-3.5">
               <div className="w-12 h-12 rounded-2xl bg-[#153528] border border-[#D4AF37] text-2xl flex items-center justify-center shadow-inner">
@@ -977,9 +969,7 @@ export default function SecretSantaApp() {
                 setGlobalAccount(null);
                 try {
                   localStorage.removeItem('santa_global_account_v2');
-                } catch {
-                  // ignore
-                }
+                } catch {}
                 showToast('已登出帳號！', 'info');
               }}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#153528] hover:bg-[#9E2A2B] text-[#FFF8E7] text-xs font-bold border border-[#D4AF37]/30 transition"
@@ -989,9 +979,7 @@ export default function SecretSantaApp() {
             </button>
           </div>
 
-          {/* 建立新小木屋 + 輸入房號直達雙欄區 */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* 建立專屬小木屋 */}
             <div className="md:col-span-2 bg-gradient-to-br from-[#122B20] to-[#071712] border-2 border-[#D4AF37]/50 rounded-3xl p-6 shadow-2xl space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-[#D4AF37] font-bold text-sm">
@@ -1024,7 +1012,6 @@ export default function SecretSantaApp() {
               </button>
             </div>
 
-            {/* 輸入代碼進入朋友木屋 */}
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl flex flex-col justify-between space-y-4">
               <div className="space-y-1.5">
                 <div className="text-sm font-bold text-[#F3E5AB] flex items-center gap-2">
@@ -1062,7 +1049,6 @@ export default function SecretSantaApp() {
             </div>
           </div>
 
-          {/* 所有聖誕小木屋總覽清單 */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-extrabold text-[#FFFDF9] flex items-center gap-2">
@@ -1133,10 +1119,6 @@ export default function SecretSantaApp() {
             )}
           </div>
         </div>
-
-      /* ================================================================= */
-      /* 畫面三：進入小木屋內部（乾淨頂部資訊 + 完整 4 大功能分頁） */
-      /* ================================================================= */
       ) : !isCurrentRoomLoaded ? (
         <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
           <div className="w-12 h-12 rounded-full border-4 border-[#D4AF37] border-t-transparent animate-spin"></div>
@@ -1157,8 +1139,8 @@ export default function SecretSantaApp() {
           </button>
         </div>
       ) : (
+        /* 畫面三：小木屋內部 */
         <div className="relative z-10 max-w-3xl mx-auto px-4 py-6 space-y-6">
-          {/* 頂部簡潔導覽列（返回總覽 + 邀請函 + 創辦人/管理員刪除） */}
           <div className="flex flex-wrap items-center justify-between gap-2 bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-2xl px-4 py-3 shadow-xl">
             <button
               onClick={() => setActiveRoomCode(null)}
@@ -1188,7 +1170,6 @@ export default function SecretSantaApp() {
             </div>
           </div>
 
-          {/* 小木屋乾淨主看板（僅顯示名稱、人數、預算、時間與心願襪進度條） */}
           <div className="bg-gradient-to-br from-[#122B20] via-[#0D231A] to-[#071712] border-2 border-[#D4AF37]/50 rounded-3xl p-6 shadow-2xl space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-1">
@@ -1216,7 +1197,6 @@ export default function SecretSantaApp() {
               </div>
             </div>
 
-            {/* 預算與交換時間標籤 */}
             <div className="flex flex-wrap gap-2 text-xs">
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#071712]/70 border border-[#D4AF37]/30 text-[#F3E5AB]">
                 <DollarSign className="w-3.5 h-3.5 text-[#D4AF37]" />
@@ -1228,7 +1208,6 @@ export default function SecretSantaApp() {
               </span>
             </div>
 
-            {/* 聖誕心願襪掛載進度條（拐杖糖流光設計） */}
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-[#F3E5AB] flex items-center gap-1.5">
@@ -1247,9 +1226,6 @@ export default function SecretSantaApp() {
             </div>
           </div>
 
-          {/* =============================================================== */}
-          {/* 5 大操作步驟導覽分頁按鈕 (Tabs) */}
-          {/* =============================================================== */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#0D231A]/90 p-2 rounded-2xl border border-[#D4AF37]/30 shadow-lg">
             {[
               { id: 'participants', label: '1. 聖誕名冊', icon: Users },
@@ -1277,9 +1253,7 @@ export default function SecretSantaApp() {
             })}
           </div>
 
-          {/* =============================================================== */}
-          {/* 分頁 1：聖誕老人名冊（點擊單人框框可展開查看完整心願與線索） */}
-          {/* =============================================================== */}
+          {/* 分頁 1：聖誕老人名冊 */}
           {activeTab === 'participants' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#D4AF37]/20 pb-3">
@@ -1308,7 +1282,6 @@ export default function SecretSantaApp() {
                 </div>
               </div>
 
-              {/* 成員卡片列表（支援點擊展開完整心願框框） */}
               <div className="space-y-3">
                 {participants.map(p => {
                   const isMe = globalAccount && p.name.toLowerCase() === globalAccount.name.toLowerCase();
@@ -1366,7 +1339,6 @@ export default function SecretSantaApp() {
                               </span>
                             </div>
 
-                            {/* 未展開時顯示前兩行預覽，提示可點擊展開 */}
                             {!isExpanded && (
                               <div className="space-y-0.5 pt-0.5">
                                 <div className="text-xs text-[#F3E5AB]/90 line-clamp-2 whitespace-pre-line">
@@ -1382,7 +1354,6 @@ export default function SecretSantaApp() {
                           </div>
                         </div>
 
-                        {/* 匿名嘴砲快速按鈕 & 避開對象設定 & 創辦人移除按鈕 */}
                         <div
                           className="flex flex-wrap items-center gap-2 self-end sm:self-center shrink-0"
                           onClick={e => e.stopPropagation()}
@@ -1444,7 +1415,6 @@ export default function SecretSantaApp() {
                         </div>
                       </div>
 
-                      {/* 點擊展開後的大框框完整內容區（不截斷任何文字！） */}
                       {isExpanded && (
                         <div
                           onClick={e => e.stopPropagation()}
@@ -1506,7 +1476,6 @@ export default function SecretSantaApp() {
                 })}
               </div>
 
-              {/* 創辦人可手動幫不會用手機的朋友代加名單 */}
               {isRoomCreator && !pairings && (
                 <div className="pt-4 border-t border-[#D4AF37]/20 space-y-2.5">
                   <div className="text-xs font-bold text-[#F3E5AB] flex items-center gap-1.5">
@@ -1567,9 +1536,7 @@ export default function SecretSantaApp() {
             </div>
           )}
 
-          {/* =============================================================== */}
-          {/* 分頁 2：許願聖誕襪與地雷（含 Gemini AI 模糊化魔法） */}
-          {/* =============================================================== */}
+          {/* 分頁 2：許願聖誕襪與地雷 */}
           {activeTab === 'wishlist' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-5">
               <div className="border-b border-[#D4AF37]/20 pb-3">
@@ -1602,7 +1569,6 @@ export default function SecretSantaApp() {
                     const isWishLocked = Boolean(pairings || myParticipant?.hasOpenedEnvelope);
                     return (
                       <>
-                        {/* 本人專屬：顯示模糊化前的真實心願答案（僅在個人 2. 許願聖誕襪中由本人查看） */}
                         {myParticipant.originalWishlist && (
                           <div className="p-4 rounded-2xl bg-[#153528] border-2 border-[#D4AF37] space-y-2 shadow-lg">
                             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -1658,7 +1624,6 @@ export default function SecretSantaApp() {
                                   return;
                                 }
                                 setIsAiLoading(true);
-                                // 若已經模糊化過，拿保存的真實答案 (originalWishlist) 重新產生模糊線索；否則把當前輸入存為真實答案
                                 const rawAnswer = (myParticipant.originalWishlist && myParticipant.originalWishlist.trim())
                                   ? myParticipant.originalWishlist.trim()
                                   : myParticipant.wishlist.trim();
@@ -1781,9 +1746,7 @@ export default function SecretSantaApp() {
             </div>
           )}
 
-          {/* =============================================================== */}
-          {/* 分頁 3：匿名嘴砲許願池（公開對每個人匿名推坑、爆料、打嘴砲） */}
-          {/* =============================================================== */}
+          {/* 分頁 3：匿名嘴砲牆 */}
           {activeTab === 'gossip' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-5">
               <div className="border-b border-[#D4AF37]/20 pb-3">
@@ -1796,7 +1759,6 @@ export default function SecretSantaApp() {
                 </p>
               </div>
 
-              {/* 選擇要嘴砲 / 推坑的對象 */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-[#F3E5AB]">
                   1. 點選你要匿名嘴砲 / 推坑的對象：
@@ -1829,7 +1791,6 @@ export default function SecretSantaApp() {
                 </div>
               </div>
 
-              {/* 發送匿名嘴砲表單 */}
               {(() => {
                 const targetMember = participants.find(p => p.id === selectedGossipTargetId) || participants[0];
                 if (!targetMember) return null;
@@ -1930,7 +1891,6 @@ export default function SecretSantaApp() {
                       </div>
                     </div>
 
-                    {/* 當前選中對象的留言牆 */}
                     <div className="space-y-3">
                       <div className="text-xs font-extrabold text-[#D4AF37] flex items-center justify-between">
                         <span>📢 關於「{targetMember.name}」的公開匿名嘴砲＆送禮建議 ({targetComments.length} 則)</span>
@@ -1990,9 +1950,7 @@ export default function SecretSantaApp() {
             </div>
           )}
 
-          {/* =============================================================== */}
-          {/* 分頁 4：木屋活動設定與啟動抽籤 */}
-          {/* =============================================================== */}
+          {/* 分頁 4：木屋活動設定與抽籤 */}
           {activeTab === 'settings' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-6">
               <div className="border-b border-[#D4AF37]/20 pb-3">
@@ -2050,7 +2008,6 @@ export default function SecretSantaApp() {
                 </div>
               </div>
 
-              {/* 抽籤控制中心 */}
               <div className="p-5 rounded-2xl bg-[#071712]/90 border border-[#D4AF37]/40 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
@@ -2113,9 +2070,7 @@ export default function SecretSantaApp() {
             </div>
           )}
 
-          {/* =============================================================== */}
-          {/* 分頁 4：火漆封蠟信封開箱 */}
-          {/* =============================================================== */}
+          {/* 分頁 5：火漆封蠟信封開箱 */}
           {activeTab === 'reveal' && (
             <div className="bg-[#0D231A]/95 border-2 border-[#D4AF37]/60 rounded-3xl p-6 shadow-2xl space-y-5">
               <div className="text-center space-y-1">
@@ -2193,9 +2148,7 @@ export default function SecretSantaApp() {
         </div>
       )}
 
-      {/* ================================================================= */}
-      {/* 彈出視窗 A：專屬邀請函（含 ?room=直達連結） */}
-      {/* ================================================================= */}
+      {/* 彈出視窗 A：專屬邀請函 */}
       {showInviteModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0D231A] border-2 border-[#D4AF37] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
@@ -2247,9 +2200,7 @@ export default function SecretSantaApp() {
         </div>
       )}
 
-      {/* ================================================================= */}
-      {/* 彈出視窗 B：刪除小木屋權限確認（僅創辦人本人或管理員密碼 8888） */}
-      {/* ================================================================= */}
+      {/* 彈出視窗 B：刪除小木屋權限確認 */}
       {deleteModalRoomCode && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0D231A] border-2 border-[#E05A47] rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
