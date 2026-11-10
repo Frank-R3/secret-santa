@@ -4,7 +4,7 @@ import {
   Unlock, Trash2, Plus, ArrowLeft, KeyRound, LogOut,
   Calendar, DollarSign, ShieldAlert, AlertTriangle, ChevronRight,
   RefreshCw, Snowflake, Trees, HeartHandshake, Ban, MailOpen, UserPlus,
-  MessageSquare, Send
+  MessageSquare, Send, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 import { initializeApp, getApps } from 'firebase/app';
@@ -27,7 +27,6 @@ import {
 // ==========================================
 const getViteEnv = (key) => {
   try {
-    // 支援標準 process.env
     if (typeof process !== 'undefined' && process.env && process.env[key]) {
       return process.env[key];
     }
@@ -56,7 +55,6 @@ const EXTERNAL_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 let app = null;
 let auth = null;
 let db = null;
-let isCloudConfigured = false;
 
 try {
   const rawGlobalConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
@@ -68,7 +66,6 @@ try {
     app = !getApps().length ? initializeApp(finalConfig) : getApps()[0];
     auth = getAuth(app);
     db = getFirestore(app);
-    isCloudConfigured = true;
   }
 } catch (e) {
   console.warn("Firebase initialization warning:", e);
@@ -116,7 +113,6 @@ function generateSecretSantaPairs(participants) {
     }
 
     if (success) {
-      // 單一環狀檢查，確保不會只有兩個人互抽
       const map = {};
       assignments.forEach(a => { map[a.giverId] = a.receiverId; });
       let curr = givers[0].id;
@@ -137,7 +133,7 @@ function generateSecretSantaPairs(participants) {
 }
 
 // ==========================================
-// 2. Gemini AI 智慧心願模糊化功能
+// 2. Gemini AI 智慧心願模糊化功能 (高難度燒腦側面暗示版)
 // ==========================================
 async function callGeminiBlurWish(rawWish, apiKeyToUse) {
   const key = apiKeyToUse || "";
@@ -150,7 +146,16 @@ async function callGeminiBlurWish(rawWish, apiKeyToUse) {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `你是一位充滿幽默感與北歐聖誕溫馨氣息的聖誕精靈。請把使用者填寫的直白交換禮物心願：「${rawWish}」，改寫成 3 個不同風格的「神秘線索提示」（不要直接講出商品全名，讓送禮者有驚喜尋寶感，又不會買錯方向）。請用繁體中文回答，字數精簡在 90 字內，格式如下：\n✨ 詩意線索：...\n🕵️ 實用暗示：...\n🎄 幽默謎語：...`
+              text: `你是一位高深莫測、擅長「極致側面暗示」的北歐聖誕精靈。使用者填寫了一個直白的交換禮物心願：「${rawWish}」。
+請將這個心願高度模糊化，改寫成 3 個「極度曖昧、不能讓人一眼看穿確切商品、但能隱約感覺到關聯情境或身體部位/生活動態」的燒腦線索！
+【重要範例與禁令】：
+- 例如願望若是「球鞋」：絕對禁止出現「鞋、球、穿、襪、鞋帶、Nike」等字眼！只能暗示「與大地接觸時的反作用力、承載雙足律動與邁開步伐的動能夥伴、陪我流汗奔馳或走過街頭的支撐」。
+- 例如願望若是「保溫杯」：絕對禁止出現「杯、水、喝、瓶、蓋子」等字眼！只能暗示「鎖住冬日裡的一抹溫熱、放在桌角隨手汲取的暖流容器」。
+- 絕對不能出現原始心願中的任何字詞！要讓送禮者覺得「好像跟某種動態/部位/情境有關，但又無法 100% 確定是哪個單品」。
+請用繁體中文回答，字數精簡在 110 字內，格式如下：
+🔮 曖昧部位與情境暗示：...
+🌌 動態與氛圍線索：...
+🧩 燒腦抽象謎語：...`
             }]
           }]
         })
@@ -162,21 +167,30 @@ async function callGeminiBlurWish(rawWish, apiKeyToUse) {
   } catch (err) {
     console.warn("Gemini AI fallback:", err);
   }
-  return `✨ 詩意線索：在冬夜裡能帶來溫暖與療癒的日常好物（靈感源自：${rawWish}）\n🕵️ 實用暗示：兼具質感與實用性，放在桌上或隨身使用都很適合！`;
+  const crypticPool = [
+    "🔮 曖昧部位與情境暗示：與日常移動的節奏、或是身體某處的舒適支撐息息相關。\n🌌 動態與氛圍線索：在動與靜的切換之間，承載著步伐、律動或生活裡的微妙能量。\n🧩 燒腦抽象謎語：不直接言明其形，卻能在每一次出發或停留時感受到它的存在感。",
+    "🔮 曖昧部位與情境暗示：常伴於感官周圍，在特定時刻能帶來恰到好處的包覆或療癒感。\n🌌 動態與氛圍線索：介於實用機能與個人風格之間，是日常儀式感裡不可或缺的拼圖。\n🧩 燒腦抽象謎語：猜得到方向卻摸不透全貌，留給送禮者一場充滿驚喜的尋寶挑戰。"
+  ];
+  return crypticPool[Math.floor(Math.random() * crypticPool.length)];
 }
 
 // ==========================================
 // 3. 北歐火漆封蠟神秘信封組件
 // ==========================================
-function WaxSealEnvelope({ giver, pairResult, participants }) {
-  const [isOpen, setIsOpen] = useState(false);
+function WaxSealEnvelope({ giver, pairResult, participants, onOpenSeal }) {
+  const [isOpen, setIsOpen] = useState(Boolean(giver?.hasOpenedEnvelope));
   const receiver = participants.find(p => p.id === pairResult.receiverId);
+
+  const handleOpen = () => {
+    setIsOpen(true);
+    if (onOpenSeal) onOpenSeal();
+  };
 
   return (
     <div className="relative w-full max-w-md mx-auto my-4">
       {!isOpen ? (
         <div
-          onClick={() => setIsOpen(true)}
+          onClick={handleOpen}
           className="group relative cursor-pointer rounded-3xl bg-gradient-to-br from-[#F4EEDC] via-[#EAE0C8] to-[#DFD1B0] text-[#153528] p-8 border-2 border-[#D4AF37] shadow-2xl transition-all duration-500 hover:scale-[1.02] hover:shadow-[#D4AF37]/20"
         >
           {/* 信封折線裝飾 */}
@@ -404,6 +418,9 @@ export default function SecretSantaApp() {
   const [selectedGossipTargetId, setSelectedGossipTargetId] = useState('');
   const [gossipInputText, setGossipInputText] = useState('');
   const [gossipAlias, setGossipAlias] = useState('🦌 神秘吃瓜馴鹿');
+
+  // 聖誕名冊：點擊單人卡片展開看完整心願清單與地雷
+  const [expandedMemberId, setExpandedMemberId] = useState(null);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -1259,7 +1276,7 @@ export default function SecretSantaApp() {
           </div>
 
           {/* =============================================================== */}
-          {/* 分頁 1：聖誕老人名冊（成員狀態、避開規則、手動新增/移除） */}
+          {/* 分頁 1：聖誕老人名冊（點擊單人框框可展開查看完整心願與線索） */}
           {/* =============================================================== */}
           {activeTab === 'participants' && (
             <div className="bg-[#0D231A]/90 border border-[#D4AF37]/30 rounded-3xl p-6 shadow-xl space-y-5">
@@ -1270,7 +1287,7 @@ export default function SecretSantaApp() {
                     <span>小木屋成員名冊 ({participants.length} 人)</span>
                   </h2>
                   <p className="text-xs text-[#A3B8AE] mt-0.5">
-                    至少需 3 人即可抽籤；點選「💬 匿名嘴砲」可去爆料朋友適合什麼禮物！
+                    💡 <strong>點擊任何一位成員的框框</strong>即可變大展開，完整查看對方的聖誕心願線索與地雷清單！
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -1289,112 +1306,199 @@ export default function SecretSantaApp() {
                 </div>
               </div>
 
-              {/* 成員卡片列表 */}
+              {/* 成員卡片列表（支援點擊展開完整心願框框） */}
               <div className="space-y-3">
                 {participants.map(p => {
                   const isMe = globalAccount && p.name.toLowerCase() === globalAccount.name.toLowerCase();
                   const hasWish = Boolean(p.isReady || (p.wishlist && p.wishlist.trim()));
                   const gossipCount = Array.isArray(p.gossipComments) ? p.gossipComments.length : 0;
+                  const isExpanded = expandedMemberId === p.id;
+
                   return (
                     <div
                       key={p.id}
-                      className={`p-4 rounded-2xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                        isMe ? 'bg-[#153528]/90 border-[#D4AF37]' : 'bg-[#071712]/80 border-[#D4AF37]/20'
+                      onClick={() => setExpandedMemberId(isExpanded ? null : p.id)}
+                      className={`p-4 sm:p-5 rounded-2xl border transition-all duration-300 cursor-pointer ${
+                        isExpanded
+                          ? 'bg-[#153528] border-2 border-[#D4AF37] shadow-2xl scale-[1.01]'
+                          : isMe
+                          ? 'bg-[#153528]/80 border-[#D4AF37]/70 hover:border-[#D4AF37]'
+                          : 'bg-[#071712]/80 border-[#D4AF37]/25 hover:border-[#D4AF37]/60'
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-11 h-11 rounded-2xl bg-[#0D231A] border border-[#D4AF37]/40 text-2xl flex items-center justify-center shrink-0">
-                          {p.avatar || '🎅'}
-                        </div>
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-extrabold text-sm text-[#FFFDF9]">{p.name}</span>
-                            {isMe && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#D4AF37] text-[#071712] font-black">
-                                我本人
-                              </span>
-                            )}
-                            {p.isHost && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#9E2A2B] text-[#FFF8E7] font-bold">
-                                👑 創辦人
-                              </span>
-                            )}
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                              hasWish ? 'bg-[#0D2E22] text-[#6EE7B7] border border-[#6EE7B7]/40' : 'bg-[#3A260B] text-[#FEF3C7]'
-                            }`}>
-                              {hasWish ? '🧦 心願襪已掛上' : '⏳ 心願未填'}
-                            </span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-12 h-12 rounded-2xl bg-[#0D231A] border border-[#D4AF37]/40 text-2xl flex items-center justify-center shrink-0 mt-0.5">
+                            {p.avatar || '🎅'}
                           </div>
-                          {p.wishlist && (
-                            <div className="text-xs text-[#A3B8AE] line-clamp-1">
-                              🎁 心願提示：{p.wishlist}
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-sm sm:text-base text-[#FFFDF9]">{p.name}</span>
+                              {isMe && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#D4AF37] text-[#071712] font-black">
+                                  我本人
+                                </span>
+                              )}
+                              {p.isHost && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#9E2A2B] text-[#FFF8E7] font-bold">
+                                  👑 創辦人
+                                </span>
+                              )}
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                hasWish ? 'bg-[#0D2E22] text-[#6EE7B7] border border-[#6EE7B7]/40' : 'bg-[#3A260B] text-[#FEF3C7]'
+                              }`}>
+                                {hasWish ? '🧦 心願襪已掛上' : '⏳ 心願未填'}
+                              </span>
+                              <span className="inline-flex items-center gap-0.5 text-[11px] text-[#D4AF37] font-bold ml-1">
+                                {isExpanded ? (
+                                  <>
+                                    <span>收合完整心願</span>
+                                    <ChevronUp className="w-3.5 h-3.5" />
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>點擊展開完整心願</span>
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                  </>
+                                )}
+                              </span>
                             </div>
-                          )}
-                          {gossipCount > 0 && (
-                            <div className="text-[11px] text-[#D4AF37] line-clamp-1">
-                              💬 最新匿名爆料：「{p.gossipComments[p.gossipComments.length - 1].text}」
-                            </div>
-                          )}
+
+                            {/* 未展開時顯示前兩行預覽，提示可點擊展開 */}
+                            {!isExpanded && (
+                              <div className="space-y-0.5 pt-0.5">
+                                <div className="text-xs text-[#F3E5AB]/90 line-clamp-2 whitespace-pre-line">
+                                  🎁 心願線索：{p.wishlist ? p.wishlist : '（尚未填寫心願清單）'}
+                                </div>
+                                {gossipCount > 0 && (
+                                  <div className="text-[11px] text-[#D4AF37] line-clamp-1">
+                                    💬 最新匿名爆料：「{p.gossipComments[p.gossipComments.length - 1].text}」
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* 匿名嘴砲快速按鈕 & 避開對象設定 & 創辦人移除按鈕 */}
-                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedGossipTargetId(p.id);
-                            setActiveTab('gossip');
-                          }}
-                          className="px-2.5 py-1.5 rounded-xl bg-[#153528] hover:bg-[#1E4635] border border-[#D4AF37]/40 text-xs font-bold text-[#F3E5AB] flex items-center gap-1 transition"
+                        {/* 匿名嘴砲快速按鈕 & 避開對象設定 & 創辦人移除按鈕 */}
+                        <div
+                          className="flex flex-wrap items-center gap-2 self-end sm:self-center shrink-0"
+                          onClick={e => e.stopPropagation()}
                         >
-                          <MessageSquare className="w-3.5 h-3.5 text-[#D4AF37]" />
-                          <span>💬 匿名嘴砲 ({gossipCount})</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedGossipTargetId(p.id);
+                              setActiveTab('gossip');
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-[#0D231A] hover:bg-[#1E4635] border border-[#D4AF37]/40 text-xs font-bold text-[#F3E5AB] flex items-center gap-1 transition"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5 text-[#D4AF37]" />
+                            <span>💬 匿名嘴砲 ({gossipCount})</span>
+                          </button>
 
-                        {(isMe || isRoomCreator) && !pairings && (
-                          <div className="flex items-center gap-1.5">
-                            <HeartHandshake className="w-3.5 h-3.5 text-[#D4AF37]" />
-                            <select
-                              value={p.excludedId || ''}
-                              onChange={e => {
-                                const val = e.target.value;
-                                const updated = participants.map(item =>
-                                  item.id === p.id ? { ...item, excludedId: val } : item
-                                );
+                          {(isMe || isRoomCreator) && !pairings && (
+                            <div className="flex items-center gap-1.5">
+                              <HeartHandshake className="w-3.5 h-3.5 text-[#D4AF37]" />
+                              <select
+                                value={p.excludedId || ''}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  const updated = participants.map(item =>
+                                    item.id === p.id ? { ...item, excludedId: val } : item
+                                  );
+                                  setParticipants(updated);
+                                  syncRoomToCloud({ participants: updated });
+                                  showToast(`已更新「${p.name}」的抽籤避開對象！`, 'info');
+                                }}
+                                className="bg-[#071712] border border-[#D4AF37]/40 rounded-xl px-2.5 py-1.5 text-xs text-[#FFF8E7]"
+                              >
+                                <option value="">不避開任何人</option>
+                                {participants
+                                  .filter(other => other.id !== p.id)
+                                  .map(other => (
+                                    <option key={other.id} value={other.id}>
+                                      避開：{other.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {isRoomCreator && !isMe && !pairings && (
+                            <button
+                              onClick={() => {
+                                const updated = participants.filter(item => item.id !== p.id);
                                 setParticipants(updated);
                                 syncRoomToCloud({ participants: updated });
-                                showToast(`已更新「${p.name}」的抽籤避開對象！`, 'info');
+                                showToast(`已將「${p.name}」移出名冊`, 'info');
                               }}
-                              className="bg-[#071712] border border-[#D4AF37]/40 rounded-xl px-2.5 py-1.5 text-xs text-[#FFF8E7]"
+                              className="p-2 rounded-xl bg-[#9E2A2B]/30 hover:bg-[#9E2A2B] text-[#FDE8E8] transition"
+                              title="移出此成員"
                             >
-                              <option value="">不避開任何人</option>
-                              {participants
-                                .filter(other => other.id !== p.id)
-                                .map(other => (
-                                  <option key={other.id} value={other.id}>
-                                    避開：{other.name}
-                                  </option>
-                                ))}
-                            </select>
-                          </div>
-                        )}
-
-                        {isRoomCreator && !isMe && !pairings && (
-                          <button
-                            onClick={() => {
-                              const updated = participants.filter(item => item.id !== p.id);
-                              setParticipants(updated);
-                              syncRoomToCloud({ participants: updated });
-                              showToast(`已將「${p.name}」移出名冊`, 'info');
-                            }}
-                            className="p-2 rounded-xl bg-[#9E2A2B]/30 hover:bg-[#9E2A2B] text-[#FDE8E8] transition"
-                            title="移出此成員"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
+
+                      {/* 點擊展開後的大框框完整內容區（不截斷任何文字！） */}
+                      {isExpanded && (
+                        <div
+                          onClick={e => e.stopPropagation()}
+                          className="mt-4 pt-4 border-t border-[#D4AF37]/30 grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fadeIn cursor-default"
+                        >
+                          <div className="p-3.5 rounded-2xl bg-[#071712]/90 border border-[#D4AF37]/40 space-y-1.5">
+                            <div className="text-xs font-extrabold text-[#D4AF37] flex items-center gap-1.5">
+                              <Gift className="w-4 h-4" />
+                              <span>🎁 想收到的聖誕心願清單 / 線索（完整內容）：</span>
+                            </div>
+                            <div className="text-xs text-[#FFF8E7] whitespace-pre-line leading-relaxed break-words">
+                              {p.wishlist && p.wishlist.trim()
+                                ? p.wishlist
+                                : '（這位成員尚未填寫心願清單）'}
+                            </div>
+                          </div>
+
+                          <div className="p-3.5 rounded-2xl bg-[#3B0D11]/60 border border-[#E05A47]/40 space-y-1.5">
+                            <div className="text-xs font-extrabold text-[#FDE8E8] flex items-center gap-1.5">
+                              <Ban className="w-4 h-4 text-[#E05A47]" />
+                              <span>💣 千萬別送的地雷清單（完整內容）：</span>
+                            </div>
+                            <div className="text-xs text-[#FDE8E8] whitespace-pre-line leading-relaxed break-words">
+                              {p.blacklist && p.blacklist.trim()
+                                ? p.blacklist
+                                : '（無特別填寫地雷清單）'}
+                            </div>
+                          </div>
+
+                          {gossipCount > 0 && (
+                            <div className="sm:col-span-2 p-3.5 rounded-2xl bg-[#0D231A] border border-[#D4AF37]/30 space-y-2">
+                              <div className="text-xs font-extrabold text-[#F3E5AB] flex items-center justify-between">
+                                <span>💬 大家對「{p.name}」的匿名嘴砲與送禮推坑 ({gossipCount} 則)：</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedGossipTargetId(p.id);
+                                    setActiveTab('gossip');
+                                  }}
+                                  className="text-[11px] text-[#D4AF37] underline"
+                                >
+                                  前往匿名嘴砲牆留言 →
+                                </button>
+                              </div>
+                              <div className="space-y-1.5">
+                                {p.gossipComments.map(c => (
+                                  <div key={c.id} className="text-xs bg-[#071712]/70 rounded-xl px-3 py-2 border border-[#D4AF37]/20 text-[#FFF8E7]">
+                                    <span className="font-bold text-[#D4AF37]">{c.alias}：</span>
+                                    <span className="whitespace-pre-line break-words">{c.text}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1471,9 +1575,19 @@ export default function SecretSantaApp() {
                   <span>我的專屬許願聖誕襪（{globalAccount.name}）</span>
                 </h2>
                 <p className="text-xs text-[#A3B8AE] mt-0.5">
-                  寫下您想收到的禮物方向與千萬別送的地雷！若不想講太白，可點擊「✨ AI 幫我詩意模糊化」。
+                  寫下您想收到的禮物方向與千萬別送的地雷！若不想講太白，可點擊「✨ AI 燒腦高度模糊化」。
                 </p>
               </div>
+
+              {Boolean(pairings || myParticipant?.hasOpenedEnvelope) && (
+                <div className="p-4 rounded-2xl bg-[#3B0D11]/90 border border-[#E05A47] text-[#FDE8E8] text-xs flex items-start gap-2.5 shadow-lg">
+                  <Lock className="w-4 h-4 text-[#E05A47] shrink-0 mt-0.5" />
+                  <div className="leading-relaxed">
+                    <strong className="text-[#F3E5AB]">🔒 火漆信封已開箱／已發放，心願清單已鎖定：</strong>
+                    為了避免秘密聖誕老人已經準備好禮物卻臨時被改掉願望，火漆信封開箱後<strong>無法再對「我想收到的聖誕心願清單 / 線索」與地雷進行更改</strong>喔！
+                  </div>
+                </div>
+              )}
 
               {!myParticipant ? (
                 <div className="text-center py-8 text-xs text-[#A3B8AE]">
@@ -1481,102 +1595,130 @@ export default function SecretSantaApp() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-[#F3E5AB]">
-                        🎁 我想收到的聖誕心願清單 / 線索：
-                      </label>
-                      <button
-                        type="button"
-                        disabled={isAiLoading || !myParticipant.wishlist}
-                        onClick={async () => {
-                          setIsAiLoading(true);
-                          const blurred = await callGeminiBlurWish(myParticipant.wishlist, EXTERNAL_GEMINI_API_KEY);
-                          const updated = participants.map(item =>
-                            item.id === myParticipant.id ? { ...item, wishlist: blurred, isReady: true } : item
-                          );
-                          setParticipants(updated);
-                          syncRoomToCloud({ participants: updated });
-                          setIsAiLoading(false);
-                          showToast('✨ AI 聖誕精靈已幫您把心願轉化為神秘線索！', 'success');
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#E5C158] text-[#071712] text-xs font-extrabold disabled:opacity-50 shadow transition"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>{isAiLoading ? 'AI 聖誕精靈施法中...' : '✨ AI 幫我詩意模糊化心願'}</span>
-                      </button>
-                    </div>
-                    <textarea
-                      rows={4}
-                      value={myParticipant.wishlist || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        const updated = participants.map(item =>
-                          item.id === myParticipant.id ? { ...item, wishlist: val } : item
-                        );
-                        setParticipants(updated);
-                        syncRoomToCloud({ participants: updated });
-                      }}
-                      placeholder="例如：最近冬天手很冷想要保暖小物、桌遊、或是木質調香氛蠟燭..."
-                      className="w-full bg-[#071712] border border-[#D4AF37]/30 rounded-2xl p-4 text-xs text-[#FFF8E7] leading-relaxed focus:outline-none focus:border-[#D4AF37]"
-                    />
-                  </div>
+                  {(() => {
+                    const isWishLocked = Boolean(pairings || myParticipant?.hasOpenedEnvelope);
+                    return (
+                      <>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <label className="text-xs font-bold text-[#F3E5AB] flex items-center gap-1.5">
+                              <span>🎁 我想收到的聖誕心願清單 / 線索：</span>
+                              {isWishLocked && (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#9E2A2B] text-white font-bold">
+                                  🔒 火漆信封已開箱・禁止更改
+                                </span>
+                              )}
+                            </label>
+                            <button
+                              type="button"
+                              disabled={isWishLocked || isAiLoading || !myParticipant.wishlist}
+                              onClick={async () => {
+                                if (isWishLocked) {
+                                  showToast('火漆信封已開箱，無法再修改心願清單喔！', 'warning');
+                                  return;
+                                }
+                                setIsAiLoading(true);
+                                const blurred = await callGeminiBlurWish(myParticipant.wishlist, EXTERNAL_GEMINI_API_KEY);
+                                const updated = participants.map(item =>
+                                  item.id === myParticipant.id ? { ...item, wishlist: blurred, isReady: true } : item
+                                );
+                                setParticipants(updated);
+                                syncRoomToCloud({ participants: updated });
+                                setIsAiLoading(false);
+                                showToast('🔮 AI 聖誕精靈已將您的心願化為極致側面燒腦暗示！', 'success');
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#E5C158] text-[#071712] text-xs font-extrabold disabled:opacity-40 disabled:cursor-not-allowed shadow transition"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>{isAiLoading ? 'AI 聖誕精靈施法中...' : '🔮 AI 極致燒腦模糊化心願'}</span>
+                            </button>
+                          </div>
+                          <textarea
+                            rows={4}
+                            disabled={isWishLocked}
+                            value={myParticipant.wishlist || ''}
+                            onChange={e => {
+                              if (isWishLocked) return;
+                              const val = e.target.value;
+                              const updated = participants.map(item =>
+                                item.id === myParticipant.id ? { ...item, wishlist: val } : item
+                              );
+                              setParticipants(updated);
+                              syncRoomToCloud({ participants: updated });
+                            }}
+                            placeholder="例如：輸入「球鞋」，再點右上角「🔮 AI 極致燒腦模糊化心願」，AI 會轉化成跟步伐律動與地面支撐有關的神秘暗示！"
+                            className="w-full bg-[#071712] border border-[#D4AF37]/30 rounded-2xl p-4 text-xs text-[#FFF8E7] leading-relaxed focus:outline-none focus:border-[#D4AF37] disabled:opacity-60 disabled:cursor-not-allowed"
+                          />
+                        </div>
 
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-[#E05A47]">
-                      💣 千萬別送我的地雷清單（避雷指南）：
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={myParticipant.blacklist || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        const updated = participants.map(item =>
-                          item.id === myParticipant.id ? { ...item, blacklist: val } : item
-                        );
-                        setParticipants(updated);
-                        syncRoomToCloud({ participants: updated });
-                      }}
-                      placeholder="例如：馬克杯（家裡已經有 10 個了）、護手霜、辣的食物..."
-                      className="w-full bg-[#071712] border border-[#E05A47]/30 rounded-2xl p-3.5 text-xs text-[#FFF8E7] focus:outline-none focus:border-[#E05A47]"
-                    />
-                  </div>
+                        <div className="space-y-2">
+                          <label className="block text-xs font-bold text-[#E05A47]">
+                            💣 千萬別送我的地雷清單（避雷指南）：
+                          </label>
+                          <textarea
+                            rows={2}
+                            disabled={isWishLocked}
+                            value={myParticipant.blacklist || ''}
+                            onChange={e => {
+                              if (isWishLocked) return;
+                              const val = e.target.value;
+                              const updated = participants.map(item =>
+                                item.id === myParticipant.id ? { ...item, blacklist: val } : item
+                              );
+                              setParticipants(updated);
+                              syncRoomToCloud({ participants: updated });
+                            }}
+                            placeholder="例如：馬克杯（家裡已經有 10 個了）、護手霜、辣的食物..."
+                            className="w-full bg-[#071712] border border-[#E05A47]/30 rounded-2xl p-3.5 text-xs text-[#FFF8E7] focus:outline-none focus:border-[#E05A47] disabled:opacity-60 disabled:cursor-not-allowed"
+                          />
+                        </div>
 
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextReady = !myParticipant.isReady;
-                        const updated = participants.map(item =>
-                          item.id === myParticipant.id ? { ...item, isReady: nextReady } : item
-                        );
-                        setParticipants(updated);
-                        syncRoomToCloud({ participants: updated });
-                        showToast(
-                          nextReady ? '🧦 已將您的聖誕心願襪掛上壁爐！' : '已取下心願襪繼續修改',
-                          'success'
-                        );
-                      }}
-                      className={`w-full sm:w-auto px-6 py-3 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-2 ${
-                        myParticipant.isReady
-                          ? 'bg-[#0D2E22] text-[#6EE7B7] border border-[#6EE7B7]'
-                          : 'bg-gradient-to-r from-[#9E2A2B] to-[#B83334] text-[#FFF8E7] border border-[#D4AF37]/50 shadow-lg'
-                      }`}
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>{myParticipant.isReady ? '✅ 已掛上心願襪（點擊可取消）' : '🧦 儲存並掛上我的聖誕心願襪'}</span>
-                    </button>
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                          <button
+                            type="button"
+                            disabled={isWishLocked}
+                            onClick={() => {
+                              if (isWishLocked) return;
+                              const nextReady = !myParticipant.isReady;
+                              const updated = participants.map(item =>
+                                item.id === myParticipant.id ? { ...item, isReady: nextReady } : item
+                              );
+                              setParticipants(updated);
+                              syncRoomToCloud({ participants: updated });
+                              showToast(
+                                nextReady ? '🧦 已將您的聖誕心願襪掛上壁爐！' : '已取下心願襪繼續修改',
+                                'success'
+                              );
+                            }}
+                            className={`w-full sm:w-auto px-6 py-3 rounded-xl text-xs font-extrabold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                              myParticipant.isReady
+                                ? 'bg-[#0D2E22] text-[#6EE7B7] border border-[#6EE7B7]'
+                                : 'bg-gradient-to-r from-[#9E2A2B] to-[#B83334] text-[#FFF8E7] border border-[#D4AF37]/50 shadow-lg'
+                            }`}
+                          >
+                            {isWishLocked ? <Lock className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                            <span>
+                              {isWishLocked
+                                ? '🔒 火漆信封已開箱・心願清單已鎖定'
+                                : myParticipant.isReady
+                                ? '✅ 已掛上心願襪（點擊可取消）'
+                                : '🧦 儲存並掛上我的聖誕心願襪'}
+                            </span>
+                          </button>
 
-                    {pairings && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('reveal')}
-                        className="w-full sm:w-auto px-5 py-3 rounded-xl bg-[#D4AF37] text-[#071712] text-xs font-extrabold"
-                      >
-                        前往拆開火漆信封 →
-                      </button>
-                    )}
-                  </div>
+                          {pairings && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('reveal')}
+                              className="w-full sm:w-auto px-5 py-3 rounded-xl bg-[#D4AF37] text-[#071712] text-xs font-extrabold"
+                            >
+                              前往拆開火漆信封 →
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -1977,6 +2119,15 @@ export default function SecretSantaApp() {
                     giver={myParticipant}
                     pairResult={myPair}
                     participants={participants}
+                    onOpenSeal={() => {
+                      if (!myParticipant.hasOpenedEnvelope) {
+                        const updated = participants.map(item =>
+                          item.id === myParticipant.id ? { ...item, hasOpenedEnvelope: true } : item
+                        );
+                        setParticipants(updated);
+                        syncRoomToCloud({ participants: updated });
+                      }
+                    }}
                   />
                 );
               })()}
