@@ -588,6 +588,7 @@ export default function SecretSantaApp() {
         excludedId: '',
         isReady: false,
         wishlist: '',
+        originalWishlist: '',
         blacklist: '',
         gossipComments: []
       };
@@ -728,6 +729,7 @@ export default function SecretSantaApp() {
         excludedId: '',
         isReady: false,
         wishlist: '',
+        originalWishlist: '',
         blacklist: '',
         gossipComments: []
       }],
@@ -1545,6 +1547,7 @@ export default function SecretSantaApp() {
                           excludedId: '',
                           isReady: false,
                           wishlist: '',
+                          originalWishlist: '',
                           blacklist: '',
                           gossipComments: []
                         };
@@ -1599,10 +1602,47 @@ export default function SecretSantaApp() {
                     const isWishLocked = Boolean(pairings || myParticipant?.hasOpenedEnvelope);
                     return (
                       <>
+                        {/* 本人專屬：顯示模糊化前的真實心願答案（僅在個人 2. 許願聖誕襪中由本人查看） */}
+                        {myParticipant.originalWishlist && (
+                          <div className="p-4 rounded-2xl bg-[#153528] border-2 border-[#D4AF37] space-y-2 shadow-lg">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className="text-xs font-extrabold text-[#D4AF37] flex items-center gap-1.5">
+                                <Lock className="w-3.5 h-3.5" />
+                                <span>🔒 我的心願真實答案（僅您本人可見，名冊與火漆信封皆已隱藏）：</span>
+                              </span>
+                              {!isWishLocked && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = participants.map(item =>
+                                      item.id === myParticipant.id
+                                        ? { ...item, wishlist: item.originalWishlist, originalWishlist: '' }
+                                        : item
+                                    );
+                                    setParticipants(updated);
+                                    syncRoomToCloud({ participants: updated });
+                                    showToast('已還原為您的原始直白心願！', 'info');
+                                  }}
+                                  className="text-[11px] font-bold text-[#F3E5AB] underline hover:text-white"
+                                >
+                                  ↩ 還原成直白心願重寫
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-sm font-black text-[#FFFDF9] bg-[#071712]/80 px-3.5 py-2.5 rounded-xl border border-[#D4AF37]/30 whitespace-pre-line">
+                              🎯 {myParticipant.originalWishlist}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="space-y-2">
                           <div className="flex items-center justify-between flex-wrap gap-2">
                             <label className="text-xs font-bold text-[#F3E5AB] flex items-center gap-1.5">
-                              <span>🎁 我想收到的聖誕心願清單 / 線索：</span>
+                              <span>
+                                {myParticipant.originalWishlist
+                                  ? '🔮 公開給大家看的模糊化燒腦線索（所有人只看得到這段）：'
+                                  : '🎁 我想收到的聖誕心願清單 / 線索：'}
+                              </span>
                               {isWishLocked && (
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#9E2A2B] text-white font-bold">
                                   🔒 火漆信封已開箱・禁止更改
@@ -1611,26 +1651,43 @@ export default function SecretSantaApp() {
                             </label>
                             <button
                               type="button"
-                              disabled={isWishLocked || isAiLoading || !myParticipant.wishlist}
+                              disabled={isWishLocked || isAiLoading || !(myParticipant.originalWishlist || myParticipant.wishlist)}
                               onClick={async () => {
                                 if (isWishLocked) {
                                   showToast('火漆信封已開箱，無法再修改心願清單喔！', 'warning');
                                   return;
                                 }
                                 setIsAiLoading(true);
-                                const blurred = await callGeminiBlurWish(myParticipant.wishlist, EXTERNAL_GEMINI_API_KEY);
+                                // 若已經模糊化過，拿保存的真實答案 (originalWishlist) 重新產生模糊線索；否則把當前輸入存為真實答案
+                                const rawAnswer = (myParticipant.originalWishlist && myParticipant.originalWishlist.trim())
+                                  ? myParticipant.originalWishlist.trim()
+                                  : myParticipant.wishlist.trim();
+                                const blurred = await callGeminiBlurWish(rawAnswer, EXTERNAL_GEMINI_API_KEY);
                                 const updated = participants.map(item =>
-                                  item.id === myParticipant.id ? { ...item, wishlist: blurred, isReady: true } : item
+                                  item.id === myParticipant.id
+                                    ? {
+                                        ...item,
+                                        originalWishlist: rawAnswer,
+                                        wishlist: blurred,
+                                        isReady: true
+                                      }
+                                    : item
                                 );
                                 setParticipants(updated);
                                 syncRoomToCloud({ participants: updated });
                                 setIsAiLoading(false);
-                                showToast('🔮 AI 聖誕精靈已將您的心願化為極致側面燒腦暗示！', 'success');
+                                showToast('🔮 AI 已將心願模糊化！您的真實答案已安全保留在上方專屬區塊（僅本人可見）！', 'success');
                               }}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#E5C158] text-[#071712] text-xs font-extrabold disabled:opacity-40 disabled:cursor-not-allowed shadow transition"
                             >
                               <Sparkles className="w-3.5 h-3.5" />
-                              <span>{isAiLoading ? 'AI 聖誕精靈施法中...' : '🔮 AI 極致燒腦模糊化心願'}</span>
+                              <span>
+                                {isAiLoading
+                                  ? 'AI 聖誕精靈施法中...'
+                                  : myParticipant.originalWishlist
+                                  ? '🔮 用真實答案重新換一組模糊線索'
+                                  : '🔮 AI 極致燒腦模糊化心願'}
+                              </span>
                             </button>
                           </div>
                           <textarea
@@ -1646,7 +1703,7 @@ export default function SecretSantaApp() {
                               setParticipants(updated);
                               syncRoomToCloud({ participants: updated });
                             }}
-                            placeholder="例如：輸入「球鞋」，再點右上角「🔮 AI 極致燒腦模糊化心願」，AI 會轉化成跟步伐律動與地面支撐有關的神秘暗示！"
+                            placeholder="例如：輸入「球鞋」，再點右上角「🔮 AI 極致燒腦模糊化心願」，真實答案「球鞋」會保留在上方只有您自己看得到，而這裡會變成給大家看的神秘線索！"
                             className="w-full bg-[#071712] border border-[#D4AF37]/30 rounded-2xl p-4 text-xs text-[#FFF8E7] leading-relaxed focus:outline-none focus:border-[#D4AF37] disabled:opacity-60 disabled:cursor-not-allowed"
                           />
                         </div>
